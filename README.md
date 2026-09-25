@@ -231,3 +231,30 @@ SLAY Images is a derivative work of
 [notsosillynotsoimages](https://github.com/aceeenvw/notsosillynotsoimages) by **aceeenvw**,
 which is licensed under AGPL-3.0. Its NPC reference system, iOS support, lightbox and
 related code are still present here, so this project is distributed under the same terms.
+
+---
+
+## derry branch
+
+This fork ([derryanna/SLAYimages](https://github.com/derryanna/SLAYimages)) tracks upstream and adds two things on top, kept as a single commit on the `derry` branch:
+
+- **gpt-image / dall-e via the direct images API** — in OpenAI-compatible mode, a model name containing `gpt-image` or `dall-e` is sent to `/v1/images/generations` instead of `chat/completions`. When reference images are attached, they go through `/v1/images/edits` as multipart `image[]`.
+- **NovelAI through the SillyTavern token** — new API type «NovelAI (токен из ST)». Generation goes through SillyTavern's own `/api/novelai/generate-image`, so the token you already entered under **API Connections → NovelAI** is reused and no endpoint or key is stored in the extension. Model, aspect ratio and negative prompt have their own rows; reference images are not sent (the ST endpoint does not accept them), outfit text descriptions still are.
+
+### Install
+
+1. **Extensions** → **Install extension**
+2. Paste `https://github.com/derryanna/SLAYimages`
+3. Install, then reload SillyTavern
+
+### Sync with upstream
+
+The branch is upstream `main` plus one commit, so it is rebased rather than merged:
+
+```bash
+git remote add upstream https://github.com/wewwaistyping/SLAYimages
+git fetch upstream
+git checkout derry
+git rebase upstream/main
+git push --force-with-lease origin derry
+```
