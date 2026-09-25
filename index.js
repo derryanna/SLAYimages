@@ -8043,7 +8043,7 @@ function bindSettingsEvents() {
         // Warn, don't clear: reusing one proxy across api types is legitimate, but
         // pasting a new provider's key while the old provider's host is still in the
         // field silently ships that key to the wrong place.
-        if (settings.endpoint && !shouldReplaceEndpointForApiType(next, settings.endpoint) && next !== 'naistera') {
+        if (settings.endpoint && !shouldReplaceEndpointForApiType(next, settings.endpoint) && next !== 'naistera' && next !== 'novelai') {
             try {
                 const host = new URL(settings.endpoint, location.origin).host;
                 toastr.info(`Endpoint остался прежним: ${host}. Если это адрес другого провайдера — поменяйте его перед вводом нового ключа.`, 'SLAY Images', { timeOut: 9000 });
@@ -8051,8 +8051,9 @@ function bindSettingsEvents() {
         }
         settings.apiType = next; saveSettings(); updateVisibility();
         // custom / naistera have no model listing — hand the user the text field.
+        // novelai hides the model row altogether (model is picked in its own row).
         iigSyncModelInputMode({ forceManual: next === 'custom' || next === 'naistera' });
-        if (next !== 'custom' && next !== 'naistera' && !settings.manualModel && settings.endpoint && settings.apiKey) {
+        if (next !== 'custom' && next !== 'naistera' && next !== 'novelai' && !settings.manualModel && settings.endpoint && settings.apiKey) {
             populateModelDatalist({ silent: true }).catch(() => {});
         }
     });
