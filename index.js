@@ -2792,6 +2792,10 @@ const defaultSettings = Object.freeze({
     naisteraAspectRatio: '1:1',
     naisteraPreset: '',
     naisteraModel: 'grok',
+    // NovelAI через сервер ST (/api/novelai/generate-image) — токен хранится в ST
+    novelaiModel: 'nai-diffusion-4-5-full',
+    novelaiAspectRatio: 'auto',
+    novelaiNegativePrompt: '',
     // Style picker
     slayStyle: '',
     slayStyleName: '',
@@ -2891,7 +2895,7 @@ function shouldTriggerNaisteraVideoForMessage(messageId, everyN) {
     if (n <= 1) return true;
     return getAssistantMessageOrdinal(messageId) % n === 0;
 }
-function getEndpointPlaceholder(apiType) { return ENDPOINT_PLACEHOLDERS[apiType] || 'https://api.example.com'; }
+function getEndpointPlaceholder(apiType) { if (apiType === 'novelai') return 'не нужен — токен из SillyTavern'; return ENDPOINT_PLACEHOLDERS[apiType] || 'https://api.example.com'; }
 function normalizeConfiguredEndpoint(apiType, endpoint) {
     const trimmed = String(endpoint || '').trim().replace(/\/+$/, '');
     if (!trimmed) return apiType === 'naistera' ? DEFAULT_ENDPOINTS.naistera : '';
@@ -4126,8 +4130,94 @@ async function fetchUrlAsDataUrl(url) {
     }
 }
 
+// Models that only exist behind /v1/images/* (not chat.completions)
+function isDirectImagesApiModel(model) {
+    return /(^|\/)(gpt-image|dall-e)/i.test(model || '');
+}
+
+function mapRatioToImagesApiSize(aspectRatio) {
+    const r = String(aspectRatio || '1:1');
+    const m = r.match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
+    if (!m) return 'auto';
+    const w = parseFloat(m[1]), h = parseFloat(m[2]);
+    if (w > h) return '1536x1024';
+    if (h > w) return '1024x1536';
+    return '1024x1024';
+}
+
+function base64ToBlob(b64, mime = 'image/jpeg') {
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+}
+
+// Direct /v1/images/generations (no refs) or /v1/images/edits (with refs) for gpt-image-style models
+async function generateImageOpenAIDirect(prompt, style, referenceImages = [], options = {}) {
+    const settings = getSettings();
+    const endpoint = normalizeApiEndpoint(settings.endpoint);
+    const model = settings.model;
+    const aspectRatio = settings.aspectRatio === 'auto' ? (options.aspectRatio || '1:1') : (settings.aspectRatio || '1:1');
+    const size = mapRatioToImagesApiSize(aspectRatio);
+
+    let fullPrompt = injectStyleBlock(prompt, style);
+
+    const refLabels = options.refLabels || [];
+    const refNames = options.refNames || [];
+    const imgCount = Math.min(referenceImages.length, MAX_GENERATION_REFERENCE_IMAGES);
+
+    let response;
+    if (imgCount > 0) {
+        // /v1/images/edits — multipart, reference images as image[]
+        const instructions = [];
+        for (let i = 0; i < imgCount; i++) {
+            const label = refLabels[i] || 'reference';
+            const name = refNames[i] || '';
+            if (label === 'char_face' || label === 'user_face') instructions.push(`Image ${i + 1} is ${name}'s FACE — preserve this face exactly.`);
+            else if (label === 'char_outfit' || label === 'user_outfit') instructions.push(`Image ${i + 1} shows ${name}'s OUTFIT — preserve this clothing exactly.`);
+            else if (label === 'npc_char' || label === 'npc_user' || label === 'npc_matched') instructions.push(`Image ${i + 1} is ${name} — preserve this appearance exactly.`);
+            else if (label === 'context') instructions.push(`Image ${i + 1} is style/mood context.`);
+        }
+        if (instructions.length > 0) {
+            fullPrompt = `${instructions.join('\n')}\nGenerate the scene below. Keep all faces and outfits faithful to the references.\n\n${fullPrompt}`;
+        }
+        const form = new FormData();
+        form.append('model', model);
+        form.append('prompt', fullPrompt);
+        form.append('size', size);
+        form.append('n', '1');
+        for (let i = 0; i < imgCount; i++) {
+            form.append('image[]', base64ToBlob(referenceImages[i]), `ref_${i + 1}.jpg`);
+        }
+        const url = `${endpoint}/v1/images/edits`;
+        iigLog('INFO', `OpenAI images/edits: model=${model}, size=${size}, refs=${imgCount}`);
+        response = await robustFetch(url, { method: 'POST', headers: buildAuthHeaders(settings.apiKey), body: form });
+    } else {
+        const url = `${endpoint}/v1/images/generations`;
+        iigLog('INFO', `OpenAI images/generations: model=${model}, size=${size}`);
+        response = await robustFetch(url, {
+            method: 'POST',
+            headers: buildAuthHeaders(settings.apiKey, { 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ model, prompt: fullPrompt, size, n: 1 }),
+        });
+    }
+
+    if (!response.ok) { const text = await response.text(); throw new Error(`API Error (${response.status}): ${text}`); }
+    const result = await response.json();
+    const found = extractImageFromChatResponse(result); // shape #5 handles data[].b64_json / data[].url
+    if (!found) throw new Error('No image data in images API response (expected data[0].b64_json or data[0].url)');
+    if (typeof found === 'string' && /^https?:\/\//i.test(found)) {
+        iigLog('INFO', `Response was URL, fetching and encoding: ${found.slice(0, 80)}`);
+        return await fetchUrlAsDataUrl(found);
+    }
+    return found;
+}
+
 async function generateImageOpenAI(prompt, style, referenceImages = [], options = {}) {
     const settings = getSettings();
+    if (settings.apiType !== 'custom' && isDirectImagesApiModel(settings.model)) {
+        return await generateImageOpenAIDirect(prompt, style, referenceImages, options);
+    }
     const endpoint = normalizeApiEndpoint(settings.endpoint);
     const model = settings.model;
     const aspectRatio = settings.aspectRatio === 'auto' ? (options.aspectRatio || '1:1') : (settings.aspectRatio || '1:1');
@@ -4344,9 +4434,60 @@ async function generateImageNaistera(prompt, style, options = {}) {
     return result.data_url;
 }
 
+// ── NovelAI через сервер SillyTavern ──
+// Дёргаем родной эндпоинт ST /api/novelai/generate-image: сервер сам ходит в
+// NovelAI с токеном, сохранённым в ST (API Connections → NovelAI), распаковывает
+// zip и возвращает голый base64 PNG. Нет CORS, ключ в расширении не хранится.
+// Эндпоинт жёстко шлёт reference_image_multiple: [] — рефы передать нельзя.
+function mapRatioToNovelAISize(aspectRatio) {
+    // Размеры из "Normal" пресетов NAI — на Opus такие генерации бесплатны
+    const m = String(aspectRatio || '1:1').match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
+    if (!m) return [1024, 1024];
+    const w = parseFloat(m[1]), h = parseFloat(m[2]);
+    if (w > h) return [1216, 832];
+    if (h > w) return [832, 1216];
+    return [1024, 1024];
+}
+
+async function generateImageNovelAI(prompt, style, options = {}) {
+    const settings = getSettings();
+    const ctx = SillyTavern.getContext();
+    const model = settings.novelaiModel || 'nai-diffusion-4-5-full';
+    const aspectRatio = (settings.novelaiAspectRatio || 'auto') === 'auto' ? (options.aspectRatio || '1:1') : settings.novelaiAspectRatio;
+    const [width, height] = mapRatioToNovelAISize(aspectRatio);
+    const fullPrompt = injectStyleBlock(prompt, style);
+    iigLog('INFO', `NovelAI (ST): model=${model}, ${width}x${height}`);
+    // steps=28 и размеры выше — потолок бесплатных генераций на Opus
+    const response = await robustFetch('/api/novelai/generate-image', {
+        method: 'POST',
+        headers: ctx.getRequestHeaders(),
+        body: JSON.stringify({
+            prompt: fullPrompt,
+            model: model,
+            sampler: 'k_euler_ancestral',
+            scheduler: 'karras',
+            steps: 28,
+            scale: 5,
+            width: width,
+            height: height,
+            negative_prompt: settings.novelaiNegativePrompt || '',
+        }),
+    });
+    if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        if (response.status === 400) throw new Error('NovelAI: токен не найден в SillyTavern. Вставьте Persistent API Token в API Connections → NovelAI и нажмите Connect.');
+        throw new Error(`NovelAI error (${response.status}): ${text || response.statusText || 'генерация не удалась'}`);
+    }
+    const b64 = await response.text();
+    if (!b64) throw new Error('NovelAI вернул пустой ответ');
+    return `data:image/png;base64,${b64}`;
+}
+
 // ── Validation ──
 function validateSettings() {
     const settings = getSettings();
+    // NovelAI: endpoint/ключ живут в самом ST (API Connections → NovelAI), модель имеет дефолт
+    if (settings.apiType === 'novelai') return;
     const errors = [];
     if (!settings.endpoint && settings.apiType !== 'naistera') errors.push('URL эндпоинта не настроен');
     if (!settings.apiKey) errors.push('API ключ не настроен');
@@ -5380,7 +5521,7 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
     // ── Multimodal refs (base64 + labels) for Gemini AND OpenAI-compatible chat.completions ──
     // Custom + images/generations body has no slot for refs — don't waste time
     // downloading/encoding avatars that generateImageOpenAI would then discard.
-    const _skipRefs = settings.apiType === 'custom' && (settings.customBodyFormat || 'chat') === 'images';
+    const _skipRefs = (settings.apiType === 'custom' && (settings.customBodyFormat || 'chat') === 'images') || settings.apiType === 'novelai';
     if (settings.apiType !== 'naistera' && !_skipRefs) {
         const canPush = () => referenceImages.length < MAX_GENERATION_REFERENCE_IMAGES;
         const pushRef = (image, label, name = '') => {
@@ -5540,7 +5681,9 @@ async function generateImageWithRetry(prompt, style, onStatusUpdate, options = {
         try {
             onStatusUpdate?.(`Генерация${attempt > 0 ? ` (повтор ${attempt}/${maxRetries})` : ''}...`);
             let generated;
-            if (settings.apiType === 'naistera') {
+            if (settings.apiType === 'novelai') {
+                generated = await generateImageNovelAI(prompt, style, { ...options });
+            } else if (settings.apiType === 'naistera') {
                 generated = await generateImageNaistera(prompt, style, { ...options, referenceImages: referenceDataUrls, referenceLabels: naisteraRefLabels, videoTestMode: enableVideoTest, videoEveryN: settings.naisteraVideoEveryN });
             } else if (settings.apiType === 'gemini') {
                 // Strictly user's choice — don't auto-route via isGeminiModel().
@@ -6304,14 +6447,15 @@ function createSettingsUI() {
                 <div class="iig-section">
                     <h4><i class="fa-solid fa-plug"></i> API</h4>
                     <div class="flex-row"><label>Профиль</label><div class="flex1" style="display:flex;gap:6px;min-width:0;"><select id="slay_conn_profile" class="flex1" style="min-width:0;"><option value="">— профили подключений —</option></select><div id="slay_conn_profile_save" class="menu_button" title="Сохранить текущее подключение как профиль"><i class="fa-solid fa-floppy-disk"></i></div><div id="slay_conn_profile_delete" class="menu_button" title="Удалить выбранный профиль"><i class="fa-solid fa-trash-can"></i></div></div></div>
-                    <div class="flex-row"><label>Тип API</label><select id="slay_api_type" class="flex1"><option value="openai" ${settings.apiType === 'openai' ? 'selected' : ''}>OpenAI-compatible</option><option value="gemini" ${settings.apiType === 'gemini' ? 'selected' : ''}>Gemini-compatible</option><option value="naistera" ${settings.apiType === 'naistera' ? 'selected' : ''}>Naistera</option><option value="custom" ${settings.apiType === 'custom' ? 'selected' : ''}>Custom (свой URL)</option></select></div>
+                    <div class="flex-row"><label>Тип API</label><select id="slay_api_type" class="flex1"><option value="openai" ${settings.apiType === 'openai' ? 'selected' : ''}>OpenAI-compatible</option><option value="gemini" ${settings.apiType === 'gemini' ? 'selected' : ''}>Gemini-compatible</option><option value="naistera" ${settings.apiType === 'naistera' ? 'selected' : ''}>Naistera</option><option value="novelai" ${settings.apiType === 'novelai' ? 'selected' : ''}>NovelAI (токен из ST)</option><option value="custom" ${settings.apiType === 'custom' ? 'selected' : ''}>Custom (свой URL)</option></select></div>
                     <div class="flex-row ${settings.apiType === 'custom' ? '' : 'iig-hidden'}" id="slay_custom_format_row"><label>Формат запроса</label><select id="slay_custom_body_format" class="flex1"><option value="chat" ${(settings.customBodyFormat || 'chat') === 'chat' ? 'selected' : ''}>chat/completions (мультимодальный)</option><option value="images" ${settings.customBodyFormat === 'images' ? 'selected' : ''}>images/generations (DALL-E style)</option></select></div>
                     <p class="hint ${settings.apiType === 'custom' ? '' : 'iig-hidden'}" id="slay_custom_hint">Custom: в Endpoint вставь <b>полный URL</b> конечной точки (например <i>https://api.xxx/ai/openai/image</i>) — расширение ничего не дописывает. Формат «images/generations» не поддерживает референсы (картинки-рефы не отправляются).</p>
-                    <div class="flex-row"><label>Endpoint</label><input type="text" id="slay_endpoint" class="text_pole flex1" value="${sanitizeForHtml(settings.endpoint)}" placeholder="${getEndpointPlaceholder(settings.apiType)}"></div>
-                    <div class="flex-row"><label>API Key</label><input type="password" id="slay_api_key" class="text_pole flex1" value="${sanitizeForHtml(settings.apiKey)}"><div id="slay_key_toggle" class="menu_button iig-key-toggle" title="Show/Hide"><i class="fa-solid fa-eye"></i></div></div>
+                    <div class="flex-row ${settings.apiType === 'novelai' ? 'iig-hidden' : ''}" id="slay_endpoint_row"><label>Endpoint</label><input type="text" id="slay_endpoint" class="text_pole flex1" value="${sanitizeForHtml(settings.endpoint)}" placeholder="${getEndpointPlaceholder(settings.apiType)}"></div>
+                    <div class="flex-row ${settings.apiType === 'novelai' ? 'iig-hidden' : ''}" id="slay_api_key_row"><label>API Key</label><input type="password" id="slay_api_key" class="text_pole flex1" value="${sanitizeForHtml(settings.apiKey)}"><div id="slay_key_toggle" class="menu_button iig-key-toggle" title="Show/Hide"><i class="fa-solid fa-eye"></i></div></div>
                     <p id="slay_naistera_hint" class="hint ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}">Naistera: вставьте токен из Telegram-бота.</p>
-                    <div class="flex-row ${settings.apiType === 'naistera' ? 'iig-hidden' : ''}" id="slay_model_row"><label>Модель</label><select id="slay_model_select" class="text_pole flex1 ${settings.manualModel ? 'iig-hidden' : ''}"></select><input type="text" id="slay_model" class="text_pole flex1 ${settings.manualModel ? '' : 'iig-hidden'}" placeholder="название модели" value="${sanitizeForHtml(settings.model || '')}" autocomplete="off" spellcheck="false"><div id="slay_refresh_models" class="menu_button iig-refresh-btn" title="Обновить список"><i class="fa-solid fa-sync"></i></div></div>
-                    <label class="checkbox_label" id="slay_manual_model_row" style="margin-top:2px;"><input type="checkbox" id="slay_manual_model" ${settings.manualModel ? 'checked' : ''}><span style="font-size:0.85em;opacity:0.85;">Ввести название модели вручную</span></label>
+                    <p id="slay_novelai_hint" class="hint ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}">NovelAI: Endpoint и ключ не нужны — токен берётся из SillyTavern (<b>API Connections → NovelAI</b>). Референсы и картинки гардероба не отправляются (ограничение сервера ST), текстовые описания аутфитов работают.</p>
+                    <div class="flex-row ${settings.apiType === 'naistera' || settings.apiType === 'novelai' ? 'iig-hidden' : ''}" id="slay_model_row"><label>Модель</label><select id="slay_model_select" class="text_pole flex1 ${settings.manualModel ? 'iig-hidden' : ''}"></select><input type="text" id="slay_model" class="text_pole flex1 ${settings.manualModel ? '' : 'iig-hidden'}" placeholder="название модели" value="${sanitizeForHtml(settings.model || '')}" autocomplete="off" spellcheck="false"><div id="slay_refresh_models" class="menu_button iig-refresh-btn" title="Обновить список"><i class="fa-solid fa-sync"></i></div></div>
+                    <label class="checkbox_label ${settings.apiType === 'naistera' || settings.apiType === 'novelai' ? 'iig-hidden' : ''}" id="slay_manual_model_row" style="margin-top:2px;"><input type="checkbox" id="slay_manual_model" ${settings.manualModel ? 'checked' : ''}><span style="font-size:0.85em;opacity:0.85;">Ввести название модели вручную</span></label>
                     <div id="slay_test_connection" class="menu_button iig-test-connection"><i class="fa-solid fa-wifi"></i> Тест</div>
                 </div>
                 <hr>
@@ -6327,6 +6471,9 @@ function createSettingsUI() {
                     </div>
                     <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="slay_naistera_model_row"><label>Модель Naistera</label><select id="slay_naistera_model" class="flex1"><option value="grok" ${normalizeNaisteraModel(settings.naisteraModel) === 'grok' ? 'selected' : ''}>Grok</option><option value="nano banana" ${normalizeNaisteraModel(settings.naisteraModel) === 'nano banana' ? 'selected' : ''}>Nano Banana</option><option value="grok-pro" ${normalizeNaisteraModel(settings.naisteraModel) === 'grok-pro' ? 'selected' : ''}>Grok Pro</option><option value="novelai" ${normalizeNaisteraModel(settings.naisteraModel) === 'novelai' ? 'selected' : ''}>NovelAI</option></select></div>
                     <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="slay_naistera_aspect_row"><label>Соотношение</label><select id="slay_naistera_aspect_ratio" class="flex1"><option value="auto" ${(settings.naisteraAspectRatio || 'auto') === 'auto' ? 'selected' : ''}>Из промпта</option><option value="1:1" ${settings.naisteraAspectRatio === '1:1' ? 'selected' : ''}>1:1</option><option value="3:2" ${settings.naisteraAspectRatio === '3:2' ? 'selected' : ''}>3:2</option><option value="2:3" ${settings.naisteraAspectRatio === '2:3' ? 'selected' : ''}>2:3</option></select></div>
+                    <div class="flex-row ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_model_row"><label>Модель NovelAI</label><select id="slay_novelai_model" class="flex1"><option value="nai-diffusion-4-5-full" ${(settings.novelaiModel || 'nai-diffusion-4-5-full') === 'nai-diffusion-4-5-full' ? 'selected' : ''}>NAI Diffusion 4.5 Full</option><option value="nai-diffusion-4-5-curated" ${settings.novelaiModel === 'nai-diffusion-4-5-curated' ? 'selected' : ''}>NAI Diffusion 4.5 Curated</option><option value="nai-diffusion-4-full" ${settings.novelaiModel === 'nai-diffusion-4-full' ? 'selected' : ''}>NAI Diffusion 4 Full</option><option value="nai-diffusion-3" ${settings.novelaiModel === 'nai-diffusion-3' ? 'selected' : ''}>NAI Diffusion 3 (Anime V3)</option></select></div>
+                    <div class="flex-row ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_aspect_row"><label>Соотношение</label><select id="slay_novelai_aspect_ratio" class="flex1"><option value="auto" ${(settings.novelaiAspectRatio || 'auto') === 'auto' ? 'selected' : ''}>Из промпта</option><option value="1:1" ${settings.novelaiAspectRatio === '1:1' ? 'selected' : ''}>1:1 (1024×1024)</option><option value="2:3" ${settings.novelaiAspectRatio === '2:3' ? 'selected' : ''}>2:3 портрет (832×1216)</option><option value="3:2" ${settings.novelaiAspectRatio === '3:2' ? 'selected' : ''}>3:2 альбом (1216×832)</option></select></div>
+                    <div class="flex-row ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_negative_row"><label>Negative</label><input type="text" id="slay_novelai_negative" class="text_pole flex1" value="${sanitizeForHtml(settings.novelaiNegativePrompt || '')}" placeholder="что исключить (можно пусто)"></div>
                     <div class="flex-row" id="slay_style_row"><label>Стиль</label><div class="flex1" style="display:flex;gap:6px;align-items:center;min-width:0;"><span id="slay_style_name" style="flex:1;min-width:30px;font-size:0.8em;opacity:0.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${settings.slayStyleName || 'Не заменять'}</span><div id="slay_style_pick_btn" class="menu_button" style="white-space:nowrap;flex-shrink:0;display:inline-flex;align-items:center;gap:7px;"><i class="fa-solid fa-palette"></i><span>Выбрать</span></div></div></div>
                 </div>
 
@@ -7726,6 +7873,7 @@ function bindSettingsEvents() {
         const isGemini = apiType === 'gemini';
         const isOpenAI = apiType === 'openai';
         const isCustom = apiType === 'custom';
+        const isNovelAI = apiType === 'novelai';
 
         document.getElementById('slay_settings_body')?.classList.toggle('iig-hidden', !settings.enabled);
         document.getElementById('slay_settings_body2')?.classList.toggle('iig-hidden', !settings.enabled);
@@ -7736,9 +7884,16 @@ function bindSettingsEvents() {
         // Custom + images/generations body: no slot for reference images —
         // hide the refs UI so users don't configure refs that silently vanish.
         const isCustomImages = isCustom && (settings.customBodyFormat || 'chat') === 'images';
-        const supportsRefs = (!isNaistera || currentNaisModel === 'grok' || currentNaisModel === 'nano banana') && !isCustomImages;
+        const supportsRefs = (!isNaistera || currentNaisModel === 'grok' || currentNaisModel === 'nano banana') && !isCustomImages && !isNovelAI;
 
-        document.getElementById('slay_model_row')?.classList.toggle('iig-hidden', isNaistera);
+        document.getElementById('slay_model_row')?.classList.toggle('iig-hidden', isNaistera || isNovelAI);
+        document.getElementById('slay_manual_model_row')?.classList.toggle('iig-hidden', isNaistera || isNovelAI);
+        document.getElementById('slay_endpoint_row')?.classList.toggle('iig-hidden', isNovelAI);
+        document.getElementById('slay_api_key_row')?.classList.toggle('iig-hidden', isNovelAI);
+        document.getElementById('slay_novelai_hint')?.classList.toggle('iig-hidden', !isNovelAI);
+        document.getElementById('slay_novelai_model_row')?.classList.toggle('iig-hidden', !isNovelAI);
+        document.getElementById('slay_novelai_aspect_row')?.classList.toggle('iig-hidden', !isNovelAI);
+        document.getElementById('slay_novelai_negative_row')?.classList.toggle('iig-hidden', !isNovelAI);
         // size (WxH) is used by openai dall-e style AND custom images/generations
         document.getElementById('slay_size_row')?.classList.toggle('iig-hidden', !(isOpenAI || isCustomImages));
         document.getElementById('slay_quality_row')?.classList.toggle('iig-hidden', !isOpenAI);
@@ -7766,11 +7921,11 @@ function bindSettingsEvents() {
             const modelRow = document.getElementById('slay_naistera_model_row');
             if (modelRow) modelRow.insertAdjacentElement('afterend', noRefsHint);
         }
-        if (noRefsHint) noRefsHint.classList.toggle('iig-hidden', supportsRefs || !isNaistera);
+        if (noRefsHint) noRefsHint.classList.toggle('iig-hidden', supportsRefs || !(isNaistera || isNovelAI));
 
         const wardrobeHint = document.getElementById('slay_wardrobe_hint');
         if (wardrobeHint) {
-            if (!supportsRefs && isNaistera) {
+            if (!supportsRefs && (isNaistera || isNovelAI)) {
                 wardrobeHint.textContent = 'Модель не поддерживает референсы. Будут отправляться только текстовые описания.';
                 wardrobeHint.style.color = '#ff9800';
             } else {
@@ -8006,6 +8161,9 @@ function bindSettingsEvents() {
     document.getElementById('slay_image_size')?.addEventListener('change', (e) => { settings.imageSize = e.target.value; saveSettings(); });
     document.getElementById('slay_naistera_model')?.addEventListener('change', (e) => { settings.naisteraModel = normalizeNaisteraModel(e.target.value); saveSettings(); updateVisibility(); });
     document.getElementById('slay_naistera_aspect_ratio')?.addEventListener('change', (e) => { settings.naisteraAspectRatio = e.target.value; saveSettings(); });
+    document.getElementById('slay_novelai_model')?.addEventListener('change', (e) => { settings.novelaiModel = e.target.value; saveSettings(); });
+    document.getElementById('slay_novelai_aspect_ratio')?.addEventListener('change', (e) => { settings.novelaiAspectRatio = e.target.value; saveSettings(); });
+    document.getElementById('slay_novelai_negative')?.addEventListener('input', (e) => { settings.novelaiNegativePrompt = e.target.value; saveSettings(); });
     document.getElementById('slay_style_pick_btn')?.addEventListener('click', openStylePickerModal);
     document.getElementById('slay_image_context_enabled')?.addEventListener('change', (e) => { settings.imageContextEnabled = e.target.checked; saveSettings(); updateVisibility(); });
     document.getElementById('slay_image_context_count')?.addEventListener('input', (e) => { settings.imageContextCount = normalizeImageContextCount(e.target.value); e.target.value = String(settings.imageContextCount); saveSettings(); });
@@ -8036,9 +8194,26 @@ function bindSettingsEvents() {
         const currentSettings = getSettings();
         iigLog('INFO', `Test connection: apiType=${currentSettings.apiType}, endpoint=${currentSettings.endpoint}, apiKey=${currentSettings.apiKey ? 'set' : 'empty'}`);
         try {
-            if (!currentSettings.endpoint && currentSettings.apiType !== 'naistera') throw new Error('Укажите endpoint');
-            if (!currentSettings.apiKey) throw new Error('Укажите API key');
-            if (currentSettings.apiType === 'naistera') {
+            if (!currentSettings.endpoint && currentSettings.apiType !== 'naistera' && currentSettings.apiType !== 'novelai') throw new Error('Укажите endpoint');
+            if (!currentSettings.apiKey && currentSettings.apiType !== 'novelai') throw new Error('Укажите API key');
+            if (currentSettings.apiType === 'novelai') {
+                // Токен живёт в ST — проверяем через родной /api/novelai/status (вернёт план и Anlas)
+                const stCtx = SillyTavern.getContext();
+                const r = await fetch('/api/novelai/status', { method: 'POST', headers: stCtx.getRequestHeaders(), body: JSON.stringify({}) }).catch(() => null);
+                if (r?.ok) {
+                    const data = await r.json().catch(() => null);
+                    if (data && !data.error) {
+                        const tierNames = { 0: 'Paper', 1: 'Tablet', 2: 'Scroll', 3: 'Opus' };
+                        const tier = tierNames[data?.tier] ?? data?.tier ?? '?';
+                        const anlas = (data?.trainingStepsLeft?.fixedTrainingStepsLeft ?? 0) + (data?.trainingStepsLeft?.purchasedTrainingSteps ?? 0);
+                        toastr.success(`NovelAI OK — план: ${tier}, Anlas: ${anlas}`, 'SLAY Images', { timeOut: 5000 });
+                    } else {
+                        toastr.error('Токен NovelAI неверный. Обновите его в API Connections → NovelAI.', 'SLAY Images');
+                    }
+                } else {
+                    toastr.error('Токен NovelAI не задан в SillyTavern. Вставьте Persistent API Token в API Connections → NovelAI.', 'SLAY Images');
+                }
+            } else if (currentSettings.apiType === 'naistera') {
                 const testUrl = (currentSettings.endpoint || 'https://naistera.org').replace(/\/$/, '');
                 const r = await fetch(testUrl, { method: 'HEAD' }).catch(() => null);
                 if (r?.ok) toastr.success('Connection OK', 'SLAY Images');
