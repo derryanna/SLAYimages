@@ -7988,6 +7988,9 @@ function bindSettingsEvents() {
         settings.apiKey = p.apiKey || '';
         settings.model = p.model || '';
         settings.customBodyFormat = p.customBodyFormat || 'chat';
+        settings.novelaiModel = p.novelaiModel || 'nai-diffusion-4-5-full';
+        settings.novelaiAspectRatio = p.novelaiAspectRatio || 'auto';
+        settings.novelaiNegativePrompt = p.novelaiNegativePrompt || '';
         saveSettings();
         // Sync visible inputs to the applied profile
         const typeSel = document.getElementById('slay_api_type');
@@ -8000,6 +8003,12 @@ function bindSettingsEvents() {
         if (modelInput) modelInput.value = settings.model;
         const fmtSel = document.getElementById('slay_custom_body_format');
         if (fmtSel) fmtSel.value = settings.customBodyFormat;
+        const naiModelSel = document.getElementById('slay_novelai_model');
+        if (naiModelSel) naiModelSel.value = settings.novelaiModel;
+        const naiAspectSel = document.getElementById('slay_novelai_aspect_ratio');
+        if (naiAspectSel) naiAspectSel.value = settings.novelaiAspectRatio;
+        const naiNegInput = document.getElementById('slay_novelai_negative');
+        if (naiNegInput) naiNegInput.value = settings.novelaiNegativePrompt;
         updateVisibility();
         toastr.success(`Профиль «${name}» применён`, 'SLAY Images', { timeOut: 2000 });
     });
@@ -8016,6 +8025,9 @@ function bindSettingsEvents() {
             apiKey: settings.apiKey,
             model: settings.model,
             customBodyFormat: settings.customBodyFormat || 'chat',
+            novelaiModel: settings.novelaiModel,
+            novelaiAspectRatio: settings.novelaiAspectRatio,
+            novelaiNegativePrompt: settings.novelaiNegativePrompt,
         };
         const existing = profiles.findIndex(x => x.name === name);
         if (existing >= 0) profiles[existing] = snapshot;
