@@ -2796,6 +2796,9 @@ const defaultSettings = Object.freeze({
     novelaiModel: 'nai-diffusion-4-5-full',
     novelaiAspectRatio: 'auto',
     novelaiNegativePrompt: '',
+    // Плагин сервера nai-vibe: теги качества как на сайте NAI и вайбы (.naiv4vibe) — [{ name, strength, enabled }]
+    novelaiQuality: true,
+    novelaiVibes: [],
     // Style picker
     slayStyle: '',
     slayStyleName: '',
@@ -4449,6 +4452,69 @@ function mapRatioToNovelAISize(aspectRatio) {
     return [1024, 1024];
 }
 
+// ── Плагин сервера nai-vibe (server-plugin/nai-vibe в этом репо) ──
+const NAI_VIBE_API = '/api/plugins/nai-vibe';
+let naiVibePluginState = null; // null = ещё не проверяли
+
+async function novelaiPluginAvailable() {
+    if (naiVibePluginState !== null) return naiVibePluginState;
+    try {
+        const r = await fetch(`${NAI_VIBE_API}/vibes`, { headers: SillyTavern.getContext().getRequestHeaders() });
+        naiVibePluginState = r.ok;
+    } catch { naiVibePluginState = false; }
+    return naiVibePluginState;
+}
+
+// Список вайбов: файлы живут на сервере, в настройках — только галочка и сила по имени
+async function renderNovelaiVibes() {
+    const box = document.getElementById('slay_novelai_vibe_list');
+    if (!box) return;
+    const settings = getSettings();
+    let server;
+    try {
+        const r = await fetch(`${NAI_VIBE_API}/vibes`, { headers: SillyTavern.getContext().getRequestHeaders() });
+        naiVibePluginState = r.ok;
+        server = r.ok ? await r.json() : null;
+    } catch { server = null; }
+    if (!server) {
+        box.innerHTML = '<p class="hint">Вайбы недоступны: на сервере нет плагина nai-vibe (см. README форка).</p>';
+        return;
+    }
+    const names = new Set(server.map(v => v.name));
+    const list = (settings.novelaiVibes || []).filter(v => names.has(v.name));
+    for (const v of server) if (!list.some(x => x.name === v.name)) list.push({ name: v.name, strength: v.strength, enabled: false });
+    settings.novelaiVibes = list;
+    if (!list.length) {
+        box.innerHTML = '<p class="hint">Пока пусто — загрузите .naiv4vibe кнопкой выше.</p>';
+        return;
+    }
+    box.innerHTML = list.map((v, i) => {
+        const meta = server.find(s => s.name === v.name);
+        const model = meta?.models?.join(', ') || '?';
+        return `<div class="flex-row" style="gap:6px;align-items:center;">
+            <input type="checkbox" data-vibe-on="${i}" ${v.enabled ? 'checked' : ''}>
+            <span class="flex1" title="закодирован для: ${sanitizeForHtml(model)}">${sanitizeForHtml(v.name)} <small style="opacity:0.6;">${sanitizeForHtml(model)}</small></span>
+            <input type="number" class="text_pole" data-vibe-strength="${i}" min="0" max="1" step="0.05" value="${Number(v.strength ?? 0.6)}" style="width:4.5em;" title="сила">
+            <div class="menu_button" data-vibe-del="${i}" title="Удалить с сервера"><i class="fa-solid fa-xmark"></i></div>
+        </div>`;
+    }).join('');
+    box.querySelectorAll('[data-vibe-on]').forEach(el => el.addEventListener('change', () => {
+        list[+el.dataset.vibeOn].enabled = el.checked; saveSettings();
+    }));
+    box.querySelectorAll('[data-vibe-strength]').forEach(el => el.addEventListener('input', () => {
+        const n = parseFloat(el.value);
+        if (!isNaN(n)) { list[+el.dataset.vibeStrength].strength = Math.min(1, Math.max(0, n)); saveSettings(); }
+    }));
+    box.querySelectorAll('[data-vibe-del]').forEach(el => el.addEventListener('click', async () => {
+        const v = list[+el.dataset.vibeDel];
+        if (!confirm(`Удалить вайб «${v.name}» с сервера?`)) return;
+        await fetch(`${NAI_VIBE_API}/vibes/${encodeURIComponent(v.name)}`, { method: 'DELETE', headers: SillyTavern.getContext().getRequestHeaders() });
+        settings.novelaiVibes = list.filter(x => x !== v);
+        saveSettings();
+        renderNovelaiVibes();
+    }));
+}
+
 async function generateImageNovelAI(prompt, style, options = {}) {
     const settings = getSettings();
     const ctx = SillyTavern.getContext();
@@ -4456,9 +4522,13 @@ async function generateImageNovelAI(prompt, style, options = {}) {
     const aspectRatio = (settings.novelaiAspectRatio || 'auto') === 'auto' ? (options.aspectRatio || '1:1') : settings.novelaiAspectRatio;
     const [width, height] = mapRatioToNovelAISize(aspectRatio);
     const fullPrompt = injectStyleBlock(prompt, style);
-    iigLog('INFO', `NovelAI (ST): model=${model}, ${width}x${height}`);
+    const vibes = (settings.novelaiVibes || []).filter(v => v.enabled).map(v => ({ name: v.name, strength: v.strength }));
+    // Плагин nai-vibe умеет вайбы и теги качества; без него — родной эндпоинт ST
+    const viaPlugin = await novelaiPluginAvailable();
+    if (!viaPlugin && vibes.length) toastr.warning('Серверный плагин nai-vibe не установлен — вайбы пропущены', 'SLAY Images', { timeOut: 4000 });
+    iigLog('INFO', `NovelAI (${viaPlugin ? 'nai-vibe' : 'ST'}): model=${model}, ${width}x${height}, vibes=${viaPlugin ? vibes.length : 0}`);
     // steps=28 и размеры выше — потолок бесплатных генераций на Opus
-    const response = await robustFetch('/api/novelai/generate-image', {
+    const response = await robustFetch(viaPlugin ? `${NAI_VIBE_API}/generate` : '/api/novelai/generate-image', {
         method: 'POST',
         headers: ctx.getRequestHeaders(),
         body: JSON.stringify({
@@ -4471,10 +4541,13 @@ async function generateImageNovelAI(prompt, style, options = {}) {
             width: width,
             height: height,
             negative_prompt: settings.novelaiNegativePrompt || '',
+            quality: settings.novelaiQuality !== false,
+            vibes,
         }),
     });
     if (!response.ok) {
         const text = await response.text().catch(() => '');
+        if (viaPlugin) throw new Error(`NovelAI (${response.status}): ${text || response.statusText || 'генерация не удалась'}`);
         if (response.status === 400) throw new Error('NovelAI: токен не найден в SillyTavern. Вставьте Persistent API Token в API Connections → NovelAI и нажмите Connect.');
         throw new Error(`NovelAI error (${response.status}): ${text || response.statusText || 'генерация не удалась'}`);
     }
@@ -6474,6 +6547,11 @@ function createSettingsUI() {
                     <div class="flex-row ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_model_row"><label>Модель NovelAI</label><select id="slay_novelai_model" class="flex1"><option value="nai-diffusion-4-5-full" ${(settings.novelaiModel || 'nai-diffusion-4-5-full') === 'nai-diffusion-4-5-full' ? 'selected' : ''}>NAI Diffusion 4.5 Full</option><option value="nai-diffusion-4-5-curated" ${settings.novelaiModel === 'nai-diffusion-4-5-curated' ? 'selected' : ''}>NAI Diffusion 4.5 Curated</option><option value="nai-diffusion-4-full" ${settings.novelaiModel === 'nai-diffusion-4-full' ? 'selected' : ''}>NAI Diffusion 4 Full</option><option value="nai-diffusion-3" ${settings.novelaiModel === 'nai-diffusion-3' ? 'selected' : ''}>NAI Diffusion 3 (Anime V3)</option></select></div>
                     <div class="flex-row ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_aspect_row"><label>Соотношение</label><select id="slay_novelai_aspect_ratio" class="flex1"><option value="auto" ${(settings.novelaiAspectRatio || 'auto') === 'auto' ? 'selected' : ''}>Из промпта</option><option value="1:1" ${settings.novelaiAspectRatio === '1:1' ? 'selected' : ''}>1:1 (1024×1024)</option><option value="2:3" ${settings.novelaiAspectRatio === '2:3' ? 'selected' : ''}>2:3 портрет (832×1216)</option><option value="3:2" ${settings.novelaiAspectRatio === '3:2' ? 'selected' : ''}>3:2 альбом (1216×832)</option></select></div>
                     <div class="flex-row ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_negative_row"><label>Negative</label><input type="text" id="slay_novelai_negative" class="text_pole flex1" value="${sanitizeForHtml(settings.novelaiNegativePrompt || '')}" placeholder="что исключить (можно пусто)"></div>
+                    <label class="checkbox_label ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_quality_row"><input type="checkbox" id="slay_novelai_quality" ${settings.novelaiQuality !== false ? 'checked' : ''}><span style="font-size:0.85em;opacity:0.85;">Теги качества, как на сайте NAI (very aesthetic, masterpiece)</span></label>
+                    <div class="${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_vibes_row" style="margin-top:4px;">
+                        <div class="flex-row"><label>Вайбы</label><div class="flex1" style="font-size:0.85em;opacity:0.85;">стиль с картинки-образца (.naiv4vibe); сила 0.2–0.6 обычно</div><label class="menu_button" title="Загрузить .naiv4vibe" style="margin:0;"><i class="fa-solid fa-upload"></i><input type="file" id="slay_novelai_vibe_file" accept=".naiv4vibe,.json" multiple hidden></label></div>
+                        <div id="slay_novelai_vibe_list"></div>
+                    </div>
                     <div class="flex-row" id="slay_style_row"><label>Стиль</label><div class="flex1" style="display:flex;gap:6px;align-items:center;min-width:0;"><span id="slay_style_name" style="flex:1;min-width:30px;font-size:0.8em;opacity:0.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${settings.slayStyleName || 'Не заменять'}</span><div id="slay_style_pick_btn" class="menu_button" style="white-space:nowrap;flex-shrink:0;display:inline-flex;align-items:center;gap:7px;"><i class="fa-solid fa-palette"></i><span>Выбрать</span></div></div></div>
                 </div>
 
@@ -7894,6 +7972,9 @@ function bindSettingsEvents() {
         document.getElementById('slay_novelai_model_row')?.classList.toggle('iig-hidden', !isNovelAI);
         document.getElementById('slay_novelai_aspect_row')?.classList.toggle('iig-hidden', !isNovelAI);
         document.getElementById('slay_novelai_negative_row')?.classList.toggle('iig-hidden', !isNovelAI);
+        document.getElementById('slay_novelai_quality_row')?.classList.toggle('iig-hidden', !isNovelAI);
+        document.getElementById('slay_novelai_vibes_row')?.classList.toggle('iig-hidden', !isNovelAI);
+        if (isNovelAI) renderNovelaiVibes();
         // size (WxH) is used by openai dall-e style AND custom images/generations
         document.getElementById('slay_size_row')?.classList.toggle('iig-hidden', !(isOpenAI || isCustomImages));
         document.getElementById('slay_quality_row')?.classList.toggle('iig-hidden', !isOpenAI);
@@ -8177,6 +8258,29 @@ function bindSettingsEvents() {
     document.getElementById('slay_novelai_model')?.addEventListener('change', (e) => { settings.novelaiModel = e.target.value; saveSettings(); });
     document.getElementById('slay_novelai_aspect_ratio')?.addEventListener('change', (e) => { settings.novelaiAspectRatio = e.target.value; saveSettings(); });
     document.getElementById('slay_novelai_negative')?.addEventListener('input', (e) => { settings.novelaiNegativePrompt = e.target.value; saveSettings(); });
+    document.getElementById('slay_novelai_quality')?.addEventListener('change', (e) => { settings.novelaiQuality = e.target.checked; saveSettings(); });
+    document.getElementById('slay_novelai_vibe_file')?.addEventListener('change', async (e) => {
+        const files = [...(e.target.files || [])];
+        e.target.value = '';
+        for (const file of files) {
+            try {
+                const r = await fetch(`${NAI_VIBE_API}/vibes`, {
+                    method: 'POST',
+                    headers: SillyTavern.getContext().getRequestHeaders(),
+                    body: JSON.stringify({ name: file.name.replace(/\.(naiv4vibe|json)$/i, ''), file: await file.text() }),
+                });
+                if (!r.ok) throw new Error(r.status === 404 ? 'серверный плагин nai-vibe не установлен' : await r.text());
+                const v = await r.json();
+                const list = settings.novelaiVibes || (settings.novelaiVibes = []);
+                if (!list.some(x => x.name === v.name)) list.push({ name: v.name, strength: v.strength, enabled: true });
+                saveSettings();
+                toastr.success(`Вайб «${v.name}» загружен`, 'SLAY Images', { timeOut: 2000 });
+            } catch (err) {
+                toastr.error(`${file.name}: ${err.message}`, 'SLAY Images');
+            }
+        }
+        renderNovelaiVibes();
+    });
     document.getElementById('slay_style_pick_btn')?.addEventListener('click', openStylePickerModal);
     document.getElementById('slay_image_context_enabled')?.addEventListener('change', (e) => { settings.imageContextEnabled = e.target.checked; saveSettings(); updateVisibility(); });
     document.getElementById('slay_image_context_count')?.addEventListener('input', (e) => { settings.imageContextCount = normalizeImageContextCount(e.target.value); e.target.value = String(settings.imageContextCount); saveSettings(); });

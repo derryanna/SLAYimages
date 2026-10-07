@@ -236,10 +236,19 @@ related code are still present here, so this project is distributed under the sa
 
 ## derry branch
 
-This fork ([derryanna/SLAYimages](https://github.com/derryanna/SLAYimages)) tracks upstream and adds two things on top, kept as a single commit on the `derry` branch:
+This fork ([derryanna/SLAYimages](https://github.com/derryanna/SLAYimages)) tracks upstream and adds a few things on top on the `derry` branch:
 
 - **gpt-image / dall-e via the direct images API** — in OpenAI-compatible mode, a model name containing `gpt-image` or `dall-e` is sent to `/v1/images/generations` instead of `chat/completions`. When reference images are attached, they go through `/v1/images/edits` as multipart `image[]`.
 - **NovelAI through the SillyTavern token** — new API type «NovelAI (токен из ST)». Generation goes through SillyTavern's own `/api/novelai/generate-image`, so the token you already entered under **API Connections → NovelAI** is reused and no endpoint or key is stored in the extension. Model, aspect ratio and negative prompt have their own rows; reference images are not sent (the ST endpoint does not accept them), outfit text descriptions still are.
+- **NovelAI vibes and quality tags (optional server plugin)** — SillyTavern's endpoint always sends empty reference arrays, so Vibe Transfer needs the small server plugin in `server-plugin/nai-vibe`. With it installed, the NovelAI section gets a «Вайбы» list: upload `.naiv4vibe` files (pre-encoded vibes, no Anlas spent on encoding), tick the ones to use and set their strength. A «Теги качества» checkbox appends `very aesthetic, masterpiece` (and `no text` when the prompt asks for no lettering), like the NovelAI site does. The token still comes from **API Connections → NovelAI** on the server; without the plugin everything falls back to the plain ST endpoint.
+
+### NovelAI vibe plugin
+
+1. Copy `server-plugin/nai-vibe` into SillyTavern's `plugins/` folder
+2. Set `enableServerPlugins: true` in `config.yaml`
+3. Restart SillyTavern
+
+Vibe files are stored per user in `data/<user>/nai-vibes/`. A vibe only works with the model it was encoded for (shown next to its name).
 
 ### Install
 
