@@ -281,8 +281,11 @@ test('nsfw is read from the base', () => {
     assert.equal(parseNaiInstruction({ base: '1boy, 1girl, kitchen, morning' }).nsfw, false);
 });
 
-test('resolveNaiLook: block model beats the UI model, absent model keeps the UI model', () => {
-    const fromBlock = resolveNaiLook(parseNaiInstruction({ base: '1girl', model: '4.5' }), { settingsModel: NAI_MODEL_V5 });
+test('resolveNaiLook: UI model wins by default; with blockModel the block model beats it', () => {
+    const uiWins = resolveNaiLook(parseNaiInstruction({ base: '1girl', model: '4.5' }), { settingsModel: NAI_MODEL_V5 });
+    assert.equal(uiWins.model, NAI_MODEL_V5);
+    assert.equal(uiWins.fromBlock, false);
+    const fromBlock = resolveNaiLook(parseNaiInstruction({ base: '1girl', model: '4.5' }), { settingsModel: NAI_MODEL_V5, blockModel: true });
     assert.equal(fromBlock.model, NAI_MODEL_45);
     assert.equal(fromBlock.fromBlock, true);
     const fromUi = resolveNaiLook(parseNaiInstruction({ base: '1girl' }), { settingsModel: NAI_MODEL_45 });
@@ -293,7 +296,7 @@ test('resolveNaiLook: block model beats the UI model, absent model keeps the UI 
 
 test('resolveNaiLook: V5 turns vibes off even when ticked, and adds the V5 phrase', () => {
     const ui = [{ name: 'violet', strength: 0.6, enabled: true }];
-    const look = resolveNaiLook(parseNaiInstruction({ base: 'nsfw, 1boy, 1girl, on bed', model: 'v5' }), { settingsModel: NAI_MODEL_45, uiVibes: ui });
+    const look = resolveNaiLook(parseNaiInstruction({ base: 'nsfw, 1boy, 1girl, on bed', model: 'v5' }), { settingsModel: NAI_MODEL_45, uiVibes: ui, blockModel: true });
     assert.equal(look.model, NAI_MODEL_V5);
     assert.equal(look.v5, true);
     assert.deepEqual(look.vibes, []);
@@ -353,7 +356,7 @@ test('buildNaiPluginBody carries the knobs only when set', () => {
 
 test('buildNaiPluginBody appends the V5 phrase after the scene, once', () => {
     const i = parseNaiInstruction({ base: '1boy, solo, upper body, night, lonely mood, soft painterly shading', model: 'v5' });
-    const look = resolveNaiLook(i, { settingsModel: NAI_MODEL_45 });
+    const look = resolveNaiLook(i, { settingsModel: NAI_MODEL_V5 });
     const body = buildNaiPluginBody(i, { styleTags: 'muted colors', styleSuffix: look.styleSuffix, negative: 'lowres', model: look.model, vibes: look.vibes });
     assert.equal(body.model, NAI_MODEL_V5);
     assert.deepEqual(body.vibes, []);

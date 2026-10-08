@@ -50,13 +50,15 @@ export const NAI_V5_SUFFIX = 'soft painterly shading, moody low key light, faces
 
 /**
  * Model, vibes and base suffix for one image.
- *   instr.model (from the block) beats settingsModel; absent → settingsModel.
+ *   blockModel true: instr.model (from the block) beats settingsModel; absent → settingsModel.
+ *   blockModel false (Anna's choice 8 Oct 2026, the default): the UI model always wins, the block's model is ignored.
  *   V5: vibes always off (V5 rejects 4.5 vibes) + NAI_V5_SUFFIX.
  *   4.5: the vibes ticked in the UI; none ticked → house set (night when the base is nsfw),
  *        limited to the vibe names the server actually has when serverVibes is given.
  */
-export function resolveNaiLook(instr, { settingsModel, uiVibes = [], serverVibes = null } = {}) {
-    const model = instr?.model || settingsModel || NAI_MODEL_V5;
+export function resolveNaiLook(instr, { settingsModel, uiVibes = [], serverVibes = null, blockModel = false } = {}) {
+    const useBlock = blockModel && !!instr?.model;
+    const model = (useBlock ? instr.model : settingsModel) || instr?.model || NAI_MODEL_V5;
     const v5 = isNaiV5(model);
     let vibes = [];
     let missing = [];
@@ -74,7 +76,7 @@ export function resolveNaiLook(instr, { settingsModel, uiVibes = [], serverVibes
             }
         }
     }
-    return { model, v5, vibes, styleSuffix: v5 ? NAI_V5_SUFFIX : '', fromBlock: !!instr?.model, missing };
+    return { model, v5, vibes, styleSuffix: v5 ? NAI_V5_SUFFIX : '', fromBlock: useBlock, missing };
 }
 
 // ─────────────────────────── instruction parsing ───────────────────────────

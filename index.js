@@ -4921,6 +4921,7 @@ async function generateImageNovelAI(prompt, style, options = {}) {
     const uiVibes = (settings.novelaiVibes || []).filter(v => v.enabled).map(v => ({ name: v.name, strength: v.strength }));
     const look = nc.resolveNaiLook(instr, {
         settingsModel: settings.novelaiModel || 'nai-diffusion-5-full',
+        blockModel: settings.novelaiModelFromBlock === true,
         uiVibes,
         serverVibes: viaPlugin ? naiServerVibeNames : null,
     });
@@ -6962,6 +6963,7 @@ function createSettingsUI() {
                     <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="slay_naistera_aspect_row"><label>Соотношение</label><select id="slay_naistera_aspect_ratio" class="flex1"><option value="auto" ${(settings.naisteraAspectRatio || 'auto') === 'auto' ? 'selected' : ''}>Из промпта</option><option value="1:1" ${settings.naisteraAspectRatio === '1:1' ? 'selected' : ''}>1:1</option><option value="3:2" ${settings.naisteraAspectRatio === '3:2' ? 'selected' : ''}>3:2</option><option value="2:3" ${settings.naisteraAspectRatio === '2:3' ? 'selected' : ''}>2:3</option></select></div>
                     <div id="slay_novelai_params" class="${settings.apiType === 'novelai' ? '' : 'iig-hidden'}">
                     <div class="flex-row" id="slay_novelai_model_row"><label>Модель NovelAI</label><select id="slay_novelai_model" class="flex1"><option value="nai-diffusion-5-full" ${(settings.novelaiModel || 'nai-diffusion-5-full') === 'nai-diffusion-5-full' ? 'selected' : ''}>NAI Diffusion V5</option><option value="nai-diffusion-4-5-full" ${settings.novelaiModel === 'nai-diffusion-4-5-full' ? 'selected' : ''}>NAI Diffusion 4.5 Full</option><option value="nai-diffusion-4-5-curated" ${settings.novelaiModel === 'nai-diffusion-4-5-curated' ? 'selected' : ''}>NAI Diffusion 4.5 Curated</option><option value="nai-diffusion-4-full" ${settings.novelaiModel === 'nai-diffusion-4-full' ? 'selected' : ''}>NAI Diffusion 4 Full</option><option value="nai-diffusion-3" ${settings.novelaiModel === 'nai-diffusion-3' ? 'selected' : ''}>NAI Diffusion 3 (Anime V3)</option></select></div>
+                    <label class="checkbox_label" title="Блок naicom пишет &quot;model&quot;: 4.5 / v5 для каждой картинки; выключено — всегда модель выше"><input type="checkbox" id="slay_novelai_model_from_block" ${settings.novelaiModelFromBlock === true ? 'checked' : ''}><span>Модель выбирает блок (иначе всегда эта)</span></label>
                     <div class="flex-row" id="slay_novelai_aspect_row"><label>Размер</label><select id="slay_novelai_aspect_ratio" class="flex1">${NAI_SIZE_OPTIONS.map(o => `<option value="${o.v}" ${(settings.novelaiAspectRatio || 'auto') === o.v ? 'selected' : ''}>${o.l}</option>`).join('')}</select></div>
                     <div class="flex-row ${settings.novelaiAspectRatio === 'custom' ? '' : 'iig-hidden'}" id="slay_novelai_custom_size_row"><label>Своё W × H</label><div class="flex1" style="display:flex;gap:6px;align-items:center;"><input type="number" id="slay_novelai_width" class="text_pole flex1" value="${Number(settings.novelaiWidth) || 832}" min="64" max="2048" step="64"><span>×</span><input type="number" id="slay_novelai_height" class="text_pole flex1" value="${Number(settings.novelaiHeight) || 1216}" min="64" max="2048" step="64"></div></div>
                     <p class="hint" id="slay_novelai_cost" style="margin-top:0;"></p>
@@ -8523,6 +8525,8 @@ function bindSettingsEvents() {
         if (fmtSel) fmtSel.value = settings.customBodyFormat;
         const naiModelSel = document.getElementById('slay_novelai_model');
         if (naiModelSel) naiModelSel.value = settings.novelaiModel;
+        const naiFromBlock = document.getElementById('slay_novelai_model_from_block');
+        if (naiFromBlock) naiFromBlock.checked = settings.novelaiModelFromBlock === true;
         const naiAspectSel = document.getElementById('slay_novelai_aspect_ratio');
         if (naiAspectSel) naiAspectSel.value = settings.novelaiAspectRatio;
         syncNaiKnobInputs();
@@ -8693,6 +8697,7 @@ function bindSettingsEvents() {
     document.getElementById('slay_naistera_model')?.addEventListener('change', (e) => { settings.naisteraModel = normalizeNaisteraModel(e.target.value); saveSettings(); updateVisibility(); });
     document.getElementById('slay_naistera_aspect_ratio')?.addEventListener('change', (e) => { settings.naisteraAspectRatio = e.target.value; saveSettings(); });
     document.getElementById('slay_novelai_model')?.addEventListener('change', (e) => { settings.novelaiModel = e.target.value; saveSettings(); updateNaiKnobsUI(); });
+    document.getElementById('slay_novelai_model_from_block')?.addEventListener('change', (e) => { settings.novelaiModelFromBlock = e.target.checked; saveSettings(); });
     document.getElementById('slay_novelai_aspect_ratio')?.addEventListener('change', (e) => { settings.novelaiAspectRatio = e.target.value; saveSettings(); updateNaiKnobsUI(); });
     // Numeric knobs: stored as typed, clamped by normalizeNaiParams when the request is built.
     const naiNumeric = [
