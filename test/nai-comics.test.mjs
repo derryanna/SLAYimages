@@ -252,3 +252,10 @@ test('renderBubbles draws every line of text and a shape per drawn bubble', () =
     assert.ok(calls.some(c => c[0] === 'ellipse'));
     assert.ok(calls.some(c => c[0] === 'stroke'));
 });
+
+test('findBubbleRegions rejects a pale beige wall framed by dark lines (not paper-white)', () => {
+    const img = makeImage(300, 440);
+    ellipse(img, 150, 120, 62, 72, [20, 20, 20]);
+    ellipse(img, 150, 120, 60, 70, [236, 230, 222]);   // beige, passes the loose white test
+    assert.equal(findBubbleRegions(img).length, 0);
+});

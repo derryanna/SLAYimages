@@ -234,7 +234,7 @@ export function findBubbleRegions(img, opts = {}) {
     const o = {
         white: 222,          // min channel value for "white"
         chroma: 30,          // max (max-min) channel spread
-        minArea: 0.006,      // of the image
+        minArea: 0.003,      // of the image (small NovelAI bubbles sit near 0.005)
         maxArea: 0.16,
         minFill: 0.6,        // filled area / bbox area
         minEllipse: 0.7,     // IoU of the filled shape with the ellipse inscribed in its bbox
@@ -243,6 +243,7 @@ export function findBubbleRegions(img, opts = {}) {
         maxBorderRun: 0.25,  // reject when the region hugs an image edge for longer than this share of it
         minEdgeDark: 0.3,    // share of dark pixels in the ring just outside the region (the outline)
         darkLum: 150,
+        minMeanWhite: 238,   // bubbles are paper-white inside; pale walls, curtains and skin are not
         ...opts,
     };
     const n = W * H;
@@ -258,20 +259,21 @@ export function findBubbleRegions(img, opts = {}) {
     for (let start = 0; start < n; start++) {
         if (!white[start] || label[start] !== -1) continue;
         const id = regions.length;
-        let sp = 0, area = 0;
+        let sp = 0, area = 0, sumMin = 0;
         let x0 = W, y0 = H, x1 = -1, y1 = -1;
         stack[sp++] = start; label[start] = id;
         while (sp > 0) {
             const i = stack[--sp];
             const x = i % W, y = (i - x) / W;
             area++;
+            sumMin += Math.min(data[i * 4], data[i * 4 + 1], data[i * 4 + 2]);
             if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
             if (x > 0 && white[i - 1] && label[i - 1] === -1) { label[i - 1] = id; stack[sp++] = i - 1; }
             if (x < W - 1 && white[i + 1] && label[i + 1] === -1) { label[i + 1] = id; stack[sp++] = i + 1; }
             if (y > 0 && white[i - W] && label[i - W] === -1) { label[i - W] = id; stack[sp++] = i - W; }
             if (y < H - 1 && white[i + W] && label[i + W] === -1) { label[i + W] = id; stack[sp++] = i + W; }
         }
-        regions.push({ id, area, x0, y0, x1, y1 });
+        regions.push({ id, area, x0, y0, x1, y1, meanWhite: sumMin / area });
     }
 
     const out = [];
@@ -279,6 +281,7 @@ export function findBubbleRegions(img, opts = {}) {
         const bw = r.x1 - r.x0 + 1, bh = r.y1 - r.y0 + 1;
         const areaFrac = r.area / n;
         if (areaFrac < o.minArea || areaFrac > o.maxArea) continue;
+        if (r.meanWhite < o.minMeanWhite) continue;
         if (bw < o.minW * W || bh < o.minH * H) continue;
         const aspect = bw / bh;
         if (aspect > o.maxAspect || aspect < 1 / o.maxAspect) continue;
@@ -382,7 +385,10 @@ export function wrapText(text, maxWidth, measure) {
  */
 export function fitText(text, boxW, boxH, measure, opts = {}) {
     const { minSize = 10, maxSize = 40, lineHeight = 1.22 } = opts;
+    const words = String(text || '').trim().split(/\s+/).filter(Boolean);
     for (let size = Math.floor(maxSize); size >= minSize; size--) {
+        // Never split a word inside a bubble: a smaller size or another bubble instead.
+        if (words.some(w => measure(w, size) > boxW)) continue;
         const lines = wrapText(text, boxW, t => measure(t, size));
         const widest = Math.max(...lines.map(l => measure(l, size)), 0);
         if (lines.length * size * lineHeight <= boxH && widest <= boxW) {
@@ -415,6 +421,80 @@ function overlaps(a, b, pad = 0) {
  *   measure(text, fontSize) → px
  * @returns placements: [{ kind: 'region'|'drawn', text, speaker, fontSize, lines, lineHeight, box:{x,y,w,h}, region?, shape? }]
  */
+// Reading order of detected bubbles: top to bottom by row, left to right inside a row.
+export function readingOrder(regions, rowTol = 0.08) {
+    const idx = regions.map((r, i) => i).sort((a, b) => regions[a].cy - regions[b].cy);
+    const rows = [];
+    for (const i of idx) {
+        const row = rows.find(rw => Math.abs(regions[rw[0]].cy - regions[i].cy) < rowTol);
+        if (row) row.push(i); else rows.push([i]);
+    }
+    const rank = new Array(regions.length);
+    let k = 0;
+    for (const rw of rows) for (const i of rw.sort((a, b) => regions[a].cx - regions[b].cx)) rank[i] = k++;
+    return rank;
+}
+
+// Pick which detected bubble gets which line. NovelAI places characters freely on comic
+// pages, so the planned centers are a weak hint. Comic convention is stronger: lines go
+// into bubbles in reading order, and no bubble NovelAI drew should stay empty.
+// Score: lines placed (200 each) > speaker distance (-100 × share of the diagonal) vs reading-order inversions (-15 each).
+export function assignBubblesToRegions(bubbles, regions, ctx) {
+    const { W, H, measure, minSize, maxSize, centerOf } = ctx;
+    const n = bubbles.length, m = regions.length;
+    const result = new Array(n).fill(null);
+    if (!n || !m) return result;
+    const rank = readingOrder(regions);
+    const diag = Math.hypot(W, H);
+    const fits = bubbles.map(b => regions.map(r => {
+        const boxW = r.w * W * 0.74, boxH = r.h * H * 0.74;
+        const fit = fitText(b.text, boxW, boxH, measure, { minSize, maxSize });
+        return fit ? { r, fit, boxW, boxH } : null;
+    }));
+    const dist = bubbles.map(b => {
+        const a = centerOf(b.speaker);
+        return regions.map(r => (a ? Math.hypot(r.cx * W - a.x, r.cy * H - a.y) / diag : 0));
+    });
+    let best = null, bestScore = -Infinity;
+    const pick = new Array(n).fill(-1);
+    const used = new Array(m).fill(false);
+    const score = () => {
+        let s = 0;
+        for (let i = 0; i < n; i++) {
+            if (pick[i] < 0) continue;
+            s += 200 - 100 * dist[i][pick[i]] - 0.01 * i; // ties: earlier lines first
+            for (let j = i + 1; j < n; j++) if (pick[j] >= 0 && rank[pick[i]] > rank[pick[j]]) s -= 15;
+        }
+        return s;
+    };
+    const exhaustive = Math.pow(m + 1, n) <= 20000;
+    const walk = (i) => {
+        if (i === n) {
+            const s = score();
+            if (s > bestScore) { bestScore = s; best = pick.slice(); }
+            return;
+        }
+        for (let j = -1; j < m; j++) {
+            if (j >= 0 && (used[j] || !fits[i][j])) continue;
+            pick[i] = j; if (j >= 0) used[j] = true;
+            walk(i + 1);
+            if (j >= 0) used[j] = false; pick[i] = -1;
+        }
+    };
+    if (exhaustive) walk(0);
+    else {
+        // Too many combinations: lines in order into the first free bubble (reading order) that fits.
+        const order = regions.map((r, i) => i).sort((a, b) => rank[a] - rank[b]);
+        best = bubbles.map((b, i) => {
+            const j = order.find(j => !used[j] && fits[i][j]);
+            if (j === undefined) return -1;
+            used[j] = true; return j;
+        });
+    }
+    best.forEach((j, i) => { if (j >= 0) result[i] = fits[i][j]; });
+    return result;
+}
+
 export function layoutBubbles(p) {
     const { bubbles = [], characters = [], regions = [], width: W, height: H, measure } = p;
     const o = {
@@ -432,37 +512,20 @@ export function layoutBubbles(p) {
         return c?.center ? { x: c.center.x * W, y: c.center.y * H } : null;
     };
 
-    const free = regions.map((r, i) => ({ r, i, used: false }));
+    const assign = assignBubblesToRegions(bubbles, regions, { W, H, measure, minSize, maxSize, centerOf });
     const placements = [];
     const occupied = []; // boxes already taken (px)
 
     bubbles.forEach((b, idx) => {
         const anchor = centerOf(b.speaker);
-        let chosen = null;
-        const candidates = free.filter(f => !f.used);
-        if (candidates.length) {
-            if (anchor) {
-                let best = null, bestD = Infinity;
-                for (const f of candidates) {
-                    const dx = f.r.cx * W - anchor.x, dy = f.r.cy * H - anchor.y;
-                    const d = Math.hypot(dx, dy) + (f.r.cy * H > anchor.y ? 0.15 * H : 0); // prefer bubbles above the speaker
-                    if (d < bestD) { bestD = d; best = f; }
-                }
-                if (best && bestD < 0.9 * Math.hypot(W, H)) chosen = best;
-            } else chosen = candidates[0];
-        }
-        if (chosen) {
-            const r = chosen.r;
+        const asg = assign[idx];
+        if (asg) {
+            const { r, fit, boxW, boxH } = asg;
             const bw = r.w * W, bh = r.h * H;
-            const boxW = bw * 0.74, boxH = bh * 0.74;
-            const fit = fitText(b.text, boxW, boxH, measure, { minSize, maxSize });
-            if (fit) {
-                chosen.used = true;
-                const box = { x: r.x * W + (bw - boxW) / 2, y: r.y * H + (bh - boxH) / 2, w: boxW, h: boxH };
-                placements.push({ kind: 'region', text: b.text, speaker: b.speaker, ...fit, box, region: r });
-                occupied.push({ x: r.x * W, y: r.y * H, w: bw, h: bh });
-                return;
-            }
+            const box = { x: r.x * W + (bw - boxW) / 2, y: r.y * H + (bh - boxH) / 2, w: boxW, h: boxH };
+            placements.push({ kind: 'region', text: b.text, speaker: b.speaker, ...fit, box, region: r });
+            occupied.push({ x: r.x * W, y: r.y * H, w: bw, h: bh });
+            return;
         }
         // Fallback: draw our own bubble. We do not know where the face is, so the bubble goes
         // into the top strip (hair/background in nearly every crop), pushed toward the image
@@ -504,6 +567,19 @@ export function layoutBubbles(p) {
         });
         occupied.push(box);
     });
+    // NovelAI drew more bubbles than there are lines (or a line fit nowhere): an empty
+    // bubble looks broken, so it gets the comic ellipsis.
+    const usedRegions = new Set(assign.filter(Boolean).map(x => x.r));
+    for (const r of regions) {
+        if (usedRegions.has(r)) continue;
+        const bw = r.w * W, bh = r.h * H, boxW = bw * 0.74, boxH = bh * 0.74;
+        const fit = fitText('…', boxW, boxH, measure, { minSize: 10, maxSize });
+        if (!fit) continue;
+        const box = { x: r.x * W + (bw - boxW) / 2, y: r.y * H + (bh - boxH) / 2, w: boxW, h: boxH };
+        placements.push({ kind: 'region', text: '…', speaker: '', ...fit, box, region: r, filler: true });
+        occupied.push({ x: r.x * W, y: r.y * H, w: bw, h: bh });
+    }
+
     return placements;
 }
 
