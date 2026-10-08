@@ -3328,7 +3328,7 @@
 .iig-nai-filters { flex-wrap: wrap; }
 .iig-nai-paste { padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.07); }
 .iig-nai-paste-text { width: 100%; box-sizing: border-box; font-size: 0.85em; resize: vertical; }
-.iig-nai-paste-actions { gap: 6px; justify-content: flex-end; margin-top: 6px; }
+.iig-nai-paste-actions { display: flex; flex-direction: row; gap: 6px; justify-content: flex-end; margin-top: 6px; }
 .iig-nai-row {
     border: 1px solid rgba(255,255,255,0.07); border-radius: 12px;
     padding: 8px 10px; margin-bottom: 6px;
