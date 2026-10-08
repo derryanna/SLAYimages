@@ -3324,7 +3324,11 @@
 .slay-style-modal.iig-nai-lib { max-width: 720px; }
 .iig-nai-filters { align-items: center; }
 .iig-nai-search { flex: 1; min-width: 120px; margin: 0; }
-.iig-nai-add { white-space: nowrap; margin: 0; }
+.iig-nai-add, .iig-nai-paste-btn, .iig-nai-img-btn { white-space: nowrap; margin: 0; }
+.iig-nai-filters { flex-wrap: wrap; }
+.iig-nai-paste { padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.07); }
+.iig-nai-paste-text { width: 100%; box-sizing: border-box; font-size: 0.85em; resize: vertical; }
+.iig-nai-paste-actions { gap: 6px; justify-content: flex-end; margin-top: 6px; }
 .iig-nai-row {
     border: 1px solid rgba(255,255,255,0.07); border-radius: 12px;
     padding: 8px 10px; margin-bottom: 6px;

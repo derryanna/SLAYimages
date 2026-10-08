@@ -4516,7 +4516,8 @@ async function renderNovelaiVibes() {
         return;
     }
     const names = new Set(server.map(v => v.name));
-    const list = (settings.novelaiVibes || []).filter(v => names.has(v.name));
+    // One row per server vibe: a profile restore could carry the same name twice («dan» showed up doubled).
+    const list = (settings.novelaiVibes || []).filter((v, i, all) => names.has(v.name) && all.findIndex(x => x.name === v.name) === i);
     for (const v of server) if (!list.some(x => x.name === v.name)) list.push({ name: v.name, strength: v.strength, enabled: false });
     settings.novelaiVibes = list;
     if (!list.length) {
@@ -4634,6 +4635,15 @@ async function openNaiLibraryModal(initialKind = 'styles') {
           <button type="button" class="slay-style-chip" data-tab="negatives">Негативы</button>
           <input type="search" class="text_pole iig-nai-search" placeholder="Поиск по имени и тегам">
           <div class="menu_button iig-nai-add" title="Новая запись"><i class="fa-solid fa-plus"></i> Добавить</div>
+          <div class="menu_button iig-nai-paste-btn" title="Вставить пост «📎 Генерация …» или промпт — сцена и персонажи вырежутся сами"><i class="fa-solid fa-paste"></i> Пост</div>
+          <label class="menu_button iig-nai-img-btn" title="Картинка с сайта NovelAI (PNG / WebP) — стиль из её промпта"><i class="fa-solid fa-image"></i> Картинка<input type="file" class="iig-nai-img-input" accept="image/png,image/webp,image/jpeg" hidden></label>
+        </div>
+        <div class="iig-nai-paste iig-hidden">
+          <textarea class="text_pole iig-nai-paste-text" rows="6" placeholder="Вставь пост «📎 Генерация …» или промпт целиком — останутся артисты и теги качества"></textarea>
+          <div class="flex-row iig-nai-paste-actions">
+            <div class="menu_button iig-nai-paste-cancel">Отмена</div>
+            <div class="menu_button iig-nai-paste-go"><i class="fa-solid fa-wand-magic-sparkles"></i> Вытащить стиль</div>
+          </div>
         </div>
         <div class="slay-style-body"><div class="iig-nai-list"></div></div>
         <p class="hint iig-nai-foot"></p>
@@ -4669,6 +4679,8 @@ async function openNaiLibraryModal(initialKind = 'styles') {
 
     const render = () => {
         overlay.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === kind));
+        for (const sel of ['.iig-nai-paste-btn', '.iig-nai-img-btn']) overlay.querySelector(sel)?.classList.toggle('iig-hidden', kind !== 'styles');
+        if (kind !== 'styles') overlay.querySelector('.iig-nai-paste')?.classList.add('iig-hidden');
         const all = nl.naiEntries(settings, kind);
         const list = nl.filterNaiEntries(all, query);
         const curKey = nl.naiModelKey(settings.novelaiModel);
@@ -4750,6 +4762,37 @@ async function openNaiLibraryModal(initialKind = 'styles') {
         editing = entry.id; query = ''; overlay.querySelector('.iig-nai-search').value = '';
         persist(); render();
         listEl.querySelector(`[data-id="${CSS.escape(entry.id)}"] [data-f="name"]`)?.focus();
+    });
+    // Style from a pasted post / a NovelAI image: the entry opens in the editor so the tags can be checked.
+    const addImportedStyle = (r) => {
+        if (!r?.value) {
+            toastr.warning('Стиль не нашёлся: в начале промпта нет артистов и тегов до «1boy, solo…»', 'SLAY Images', { timeOut: 4000 });
+            return false;
+        }
+        const entry = nl.addNaiEntry(settings, 'styles', { name: r.name || '', value: r.value, model: r.model || nl.naiModelKey(settings.novelaiModel) });
+        kind = 'styles'; editing = entry.id; query = ''; overlay.querySelector('.iig-nai-search').value = '';
+        persist(); render();
+        toastr.success(`«${entry.name}» добавлен — проверь теги и включи кликом`, 'SLAY Images', { timeOut: 3500 });
+        return true;
+    };
+    const pasteBox = overlay.querySelector('.iig-nai-paste');
+    const pasteText = overlay.querySelector('.iig-nai-paste-text');
+    overlay.querySelector('.iig-nai-paste-btn').addEventListener('click', () => {
+        pasteBox.classList.toggle('iig-hidden');
+        if (!pasteBox.classList.contains('iig-hidden')) pasteText.focus();
+    });
+    overlay.querySelector('.iig-nai-paste-cancel').addEventListener('click', () => { pasteText.value = ''; pasteBox.classList.add('iig-hidden'); });
+    overlay.querySelector('.iig-nai-paste-go').addEventListener('click', () => {
+        if (addImportedStyle(nl.parseNaiStylePost(pasteText.value))) { pasteText.value = ''; pasteBox.classList.add('iig-hidden'); }
+    });
+    overlay.querySelector('.iig-nai-img-input').addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+        const meta = nl.parseNaiImageMeta(new Uint8Array(await file.arrayBuffer()));
+        if (!meta) { toastr.warning('В картинке нет промпта NovelAI (скриншоты и пересжатые картинки его теряют)', 'SLAY Images', { timeOut: 4500 }); return; }
+        const r = nl.parseNaiStylePost(meta.prompt);
+        addImportedStyle({ ...r, model: meta.model || r.model, name: file.name.replace(/\.[^.]+$/, '').slice(0, 40) });
     });
     overlay.querySelector('.iig-nai-export').addEventListener('click', () => {
         const blob = new Blob([JSON.stringify(nl.exportNaiLibrary(settings), null, 2)], { type: 'application/json' });

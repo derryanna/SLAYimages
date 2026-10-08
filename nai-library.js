@@ -394,3 +394,121 @@ export function importNaiLibrary(settings, data, { model = 'any' } = {}) {
     merge('negatives', negatives);
     return { styles: styles.length, negatives: negatives.length };
 }
+
+// ─────────────────────────── style import: posts and NovelAI images ───────────────────────────
+// A pasted generation post (Telegram «📎 Генерация …» / a prompt from the NovelAI site) or the prompt inside a
+// NovelAI PNG/WebP → a library style: artists + quality tags only, the scene and characters are cut off.
+
+// Tags that start the "what is in the picture" part of a prompt.
+const NAI_CONTENT_TAG = /^(\d+\+?\s*(boy|girl|other|futa)s?|solo|solo focus|male focus|female focus|multiple (boys|girls)|couple|duo|trio|group|yaoi|yuri|hetero|nsfw|sfw|explicit|questionable|no humans|sex|sex from behind|anal|vaginal|oral|kiss|kissing|hug|hugging)$/i;
+
+/** Split on commas that are not inside a `1.2::a, b::` weight group. */
+export function splitNaiTags(text) {
+    const out = [];
+    let cur = '', depth = 0;
+    const s = String(text || '');
+    for (let i = 0; i < s.length; i++) {
+        if (s[i] === ':' && s[i + 1] === ':') {
+            depth = depth ? 0 : 1; // NovelAI weight groups do not nest: `::` alternates open / close
+            cur += '::'; i++; continue;
+        }
+        if (s[i] === ',' && depth === 0) { out.push(cur); cur = ''; continue; }
+        cur += s[i];
+    }
+    out.push(cur);
+    return out.map(t => t.replace(/\s+/g, ' ').trim()).filter(Boolean);
+}
+
+/** Bare tag text: weight prefix/suffix, brackets and case removed. */
+function naiTagCore(tag) {
+    return String(tag).replace(/^-?\d*\.?\d+\s*::/, '').replace(/::\s*$/, '').replace(/[{}[\]()]/g, '').trim().toLowerCase();
+}
+
+const isContentTag = (tag) => NAI_CONTENT_TAG.test(naiTagCore(tag));
+
+/**
+ * Style part of a prompt. Several paragraphs → the paragraphs before the first one that has a content tag
+ * (1boy, solo, yaoi, …). One paragraph (or content from the very first line) → the tags before the first content tag.
+ */
+export function extractNaiStyle(prompt) {
+    const paras = String(prompt || '').replace(/\r/g, '').split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+    if (!paras.length) return '';
+    const firstContent = paras.findIndex(p => splitNaiTags(p).some(isContentTag));
+    let tags;
+    if (firstContent > 0) tags = paras.slice(0, firstContent).flatMap(splitNaiTags);
+    else {
+        const all = paras.flatMap(splitNaiTags);
+        const cut = all.findIndex(isContentTag);
+        tags = cut === -1 ? all : all.slice(0, cut);
+    }
+    return tags.join(', ');
+}
+
+function naiModelFromText(s) {
+    const t = String(s || '');
+    if (/diffusion\s*v?\s*5|nai-diffusion-5/i.test(t)) return 'v5';
+    if (/v?\s*4\.5|nai-diffusion-4-5/i.test(t)) return '4.5';
+    return null;
+}
+
+/**
+ * Parse a pasted post / prompt into { name, value, model, prompt }.
+ * Understands «📎 Генерация #N», «Автор:», «Модель:», «Промпт:», «Персонажи:» lines; plain prompts work too.
+ */
+export function parseNaiStylePost(text) {
+    const src = String(text || '').replace(/\r/g, '').normalize('NFKC');
+    const line = (re) => (src.match(re)?.[1] || '').trim();
+    const author = line(/Автор\s*:\s*([^\n]+)/i).replace(/[\[\]■□▪▫\s]+/g, ' ').trim();
+    const chars = line(/Персонажи\s*:\s*\n?\s*([^\n]+)/i);
+    const num = line(/Генерация\s*#\s*(\d+)/i);
+    const model = naiModelFromText(line(/Модель\s*:\s*([^\n]+)/i));
+    let prompt = src;
+    const p = src.search(/Промпт\s*:/i);
+    if (p !== -1) prompt = src.slice(p).replace(/^Промпт\s*:\s*/i, '');
+    prompt = prompt.split(/\n\s*(Персонажи|Негатив|Undesired content|UC)\s*:/i)[0];
+    prompt = prompt.split('\n').filter(l => !/^\s*(📎|👤|🧠|🖼|🎲)/u.test(l)).join('\n');
+    const value = extractNaiStyle(prompt);
+    const who = author || chars.split(',')[0].trim();
+    const name = [who, num && `#${num}`].filter(Boolean).join(' ') || '';
+    return { name, value, model, prompt: prompt.trim() };
+}
+
+/** Prompt + model from NovelAI image metadata (PNG tEXt/iTXt, or EXIF/JSON anywhere in a WebP/JPEG). */
+export function parseNaiImageMeta(bytes) {
+    const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const utf8 = new TextDecoder('utf-8', { fatal: false });
+    const texts = {};
+    if (u8.length > 8 && u8[0] === 0x89 && u8[1] === 0x50 && u8[2] === 0x4e && u8[3] === 0x47) {
+        let off = 8;
+        const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+        while (off + 8 <= u8.length) {
+            const len = dv.getUint32(off), type = String.fromCharCode(...u8.subarray(off + 4, off + 8));
+            const data = u8.subarray(off + 8, off + 8 + len);
+            if (type === 'tEXt' || type === 'iTXt') {
+                const z = data.indexOf(0);
+                if (z > 0) {
+                    const key = String.fromCharCode(...data.subarray(0, z));
+                    let rest = data.subarray(z + 1);
+                    if (type === 'iTXt') { // compression flag, method, language\0, translated keyword\0
+                        if (rest[0] !== 0) { off += 12 + len; continue; }
+                        rest = rest.subarray(2);
+                        for (let k = 0; k < 2; k++) { const q = rest.indexOf(0); rest = rest.subarray(q + 1); }
+                    }
+                    texts[key] = utf8.decode(rest);
+                }
+            }
+            if (type === 'IEND') break;
+            off += 12 + len;
+        }
+    }
+    let prompt = texts.Description || '';
+    let model = naiModelFromText(texts.Source || texts.Software || '');
+    const pool = [texts.Comment || '', utf8.decode(u8), new TextDecoder('utf-16le').decode(u8), new TextDecoder('utf-16be').decode(u8)];
+    for (const s of pool) {
+        if (prompt && model) break;
+        const m = s.match(/"prompt"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+        if (!prompt && m) { try { prompt = JSON.parse(`"${m[1]}"`); } catch (_) { /* keep looking */ } }
+        if (!model) model = naiModelFromText((s.match(/NovelAI Diffusion V[\d.]+|nai-diffusion-[\d-]+/i) || [''])[0]);
+    }
+    return prompt ? { prompt, model } : null;
+}
