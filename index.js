@@ -4442,6 +4442,9 @@ async function generateImageNaistera(prompt, style, options = {}) {
 // NovelAI с токеном, сохранённым в ST (API Connections → NovelAI), распаковывает
 // zip и возвращает голый base64 PNG. Нет CORS, ключ в расширении не хранится.
 // Эндпоинт жёстко шлёт reference_image_multiple: [] — рефы передать нельзя.
+const NAI_DEFAULT_STYLE = 'muted colors, low key, soft shading, detailed skin, glossy skin';
+const NAI_DEFAULT_NEGATIVE = 'lowres, artistic error, worst quality, bad quality, jpeg artifacts, very displeasing, watermark, logo, signature, text, speech bubble, chibi, bad anatomy, bad hands, extra digits, fewer digits, animal ears, tattoo';
+
 function mapRatioToNovelAISize(aspectRatio) {
     // Размеры из "Normal" пресетов NAI — на Opus такие генерации бесплатны
     const m = String(aspectRatio || '1:1').match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
@@ -4579,14 +4582,16 @@ async function generateImageNovelAI(prompt, style, options = {}) {
     const aspectRatio = ratioSetting === 'auto' ? (instr.aspectRatio || options.aspectRatio || '1:1') : ratioSetting;
     const [width, height] = mapRatioToNovelAISize(aspectRatio);
     // NovelAI reads tags, not "[STYLE: … Avoid: …]" prose: keep only the tag part of the style.
-    const styleTags = nc.naiStyleTags(style);
+    // Empty fields fall back to the house look: a blank negative made NovelAI images visibly cheaper.
+    const styleTags = nc.naiStyleTags(style) || NAI_DEFAULT_STYLE;
+    const negative = (settings.novelaiNegativePrompt || '').trim() || NAI_DEFAULT_NEGATIVE;
     const vibes = (settings.novelaiVibes || []).filter(v => v.enabled).map(v => ({ name: v.name, strength: v.strength }));
     // Плагин nai-vibe умеет вайбы, теги качества и персонажные поля V4; без него — родной эндпоинт ST
     const viaPlugin = await novelaiPluginAvailable();
     if (!viaPlugin && vibes.length) toastr.warning('Серверный плагин nai-vibe не установлен — вайбы пропущены', 'SLAY Images', { timeOut: 4000 });
     // steps=28 и размеры выше — потолок бесплатных генераций на Opus
     const body = nc.buildNaiPluginBody(instr, {
-        styleTags, negative: settings.novelaiNegativePrompt || '', model, width, height,
+        styleTags, negative, model, width, height,
         quality: settings.novelaiQuality !== false, vibes: viaPlugin ? vibes : [], steps: 28, scale: 5,
     });
     if (!viaPlugin && body.characters.length) {
