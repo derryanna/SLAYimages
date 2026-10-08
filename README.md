@@ -262,6 +262,10 @@ This fork ([derryanna/SLAYimages](https://github.com/derryanna/SLAYimages)) trac
 
 Vibe files are stored per user in `data/<user>/nai-vibes/`. A vibe only works with the model it was encoded for (shown next to its name).
 
+### Per-image model switch
+
+The prompt block may add `"model": "4.5"` or `"model": "v5"` (also accepted: `"look": "hot" | "clean"`) to the `data-iig-instruction` JSON. SLAY then picks `nai-diffusion-4-5-full` or `nai-diffusion-5-full` for that one image; without the field the model from the settings is used. On V5 the vibes are always off (V5 rejects 4.5 vibe encodings) and the phrase `soft painterly shading, moody low key light, faces close and large in frame` is appended to the base. On 4.5 the vibes ticked in the UI are used; with nothing ticked the house set goes in automatically: `violet` 0.6 + `red` 0.2, or `violet` 0.6 + `dan` 0.35 when the base starts with `nsfw`. The house vibes are looked up by file name in `data/<user>/nai-vibes/` and silently skipped when a file is missing (a warning lands in the SLAY log).
+
 ### Tests
 
 `npm test` (node ≥ 20, no network): request building for the plugin, instruction parsing, bubble detection and layout.

@@ -4442,8 +4442,9 @@ async function generateImageNaistera(prompt, style, options = {}) {
 // NovelAI с токеном, сохранённым в ST (API Connections → NovelAI), распаковывает
 // zip и возвращает голый base64 PNG. Нет CORS, ключ в расширении не хранится.
 // Эндпоинт жёстко шлёт reference_image_multiple: [] — рефы передать нельзя.
-const NAI_DEFAULT_STYLE = 'muted colors, low key, soft shading, detailed skin, glossy skin';
-const NAI_DEFAULT_NEGATIVE = 'lowres, artistic error, worst quality, bad quality, jpeg artifacts, very displeasing, watermark, logo, signature, text, speech bubble, chibi, bad anatomy, bad hands, extra digits, fewer digits, animal ears, tattoo';
+// Домашний вид (раунд 2 nai-style): префикс + негатив, которые дали «фаворит» на обеих моделях.
+const NAI_DEFAULT_STYLE = 'muted colors, dim lighting, low key, detailed skin, glossy skin';
+const NAI_DEFAULT_NEGATIVE = 'lowres, artistic error, worst quality, bad quality, jpeg artifacts, very displeasing, watermark, logo, signature, text, speech bubble, chibi, bad anatomy, bad hands, extra digits, fewer digits, animal ears, tattoo, flat color, flat shading, plastic skin, airbrushed';
 
 function mapRatioToNovelAISize(aspectRatio) {
     // Размеры из "Normal" пресетов NAI — на Opus такие генерации бесплатны
@@ -4458,12 +4459,15 @@ function mapRatioToNovelAISize(aspectRatio) {
 // ── Плагин сервера nai-vibe (server-plugin/nai-vibe в этом репо) ──
 const NAI_VIBE_API = '/api/plugins/nai-vibe';
 let naiVibePluginState = null; // null = ещё не проверяли
+let naiServerVibeNames = null; // имена .naiv4vibe на сервере (для домашнего набора вайбов)
+let naiMissingVibesWarned = '';
 
 async function novelaiPluginAvailable() {
     if (naiVibePluginState !== null) return naiVibePluginState;
     try {
         const r = await fetch(`${NAI_VIBE_API}/vibes`, { headers: SillyTavern.getContext().getRequestHeaders() });
         naiVibePluginState = r.ok;
+        if (r.ok) naiServerVibeNames = (await r.json()).map(v => v.name);
     } catch { naiVibePluginState = false; }
     return naiVibePluginState;
 }
@@ -4478,6 +4482,7 @@ async function renderNovelaiVibes() {
         const r = await fetch(`${NAI_VIBE_API}/vibes`, { headers: SillyTavern.getContext().getRequestHeaders() });
         naiVibePluginState = r.ok;
         server = r.ok ? await r.json() : null;
+        if (server) naiServerVibeNames = server.map(v => v.name);
     } catch { server = null; }
     if (!server) {
         box.innerHTML = '<p class="hint">Вайбы недоступны: на сервере нет плагина nai-vibe (см. README форка).</p>';
@@ -4574,7 +4579,6 @@ async function typesetNaiBubbles(dataUrl, instr, nc) {
 async function generateImageNovelAI(prompt, style, options = {}) {
     const settings = getSettings();
     const ctx = SillyTavern.getContext();
-    const model = settings.novelaiModel || 'nai-diffusion-5-full';
     const nc = await loadNaiComics();
     // Structured { base, characters, bubbles } from the block, or the plain prompt (old "|" sections still split).
     const instr = nc.parseNaiInstruction(options.instruction || { prompt });
@@ -4585,21 +4589,33 @@ async function generateImageNovelAI(prompt, style, options = {}) {
     // Empty fields fall back to the house look: a blank negative made NovelAI images visibly cheaper.
     const styleTags = nc.naiStyleTags(style) || NAI_DEFAULT_STYLE;
     const negative = (settings.novelaiNegativePrompt || '').trim() || NAI_DEFAULT_NEGATIVE;
-    const vibes = (settings.novelaiVibes || []).filter(v => v.enabled).map(v => ({ name: v.name, strength: v.strength }));
     // Плагин nai-vibe умеет вайбы, теги качества и персонажные поля V4; без него — родной эндпоинт ST
     const viaPlugin = await novelaiPluginAvailable();
-    if (!viaPlugin && vibes.length) toastr.warning('Серверный плагин nai-vibe не установлен — вайбы пропущены', 'SLAY Images', { timeOut: 4000 });
+    // Модель на каждую картинку: блок пишет "model": "4.5" | "v5" — иначе настройка UI.
+    // V5: вайбы выключены + фраза в конец base. 4.5: галочки UI, а если ни одной — домашний набор (ночь: violet+dan).
+    const uiVibes = (settings.novelaiVibes || []).filter(v => v.enabled).map(v => ({ name: v.name, strength: v.strength }));
+    const look = nc.resolveNaiLook(instr, {
+        settingsModel: settings.novelaiModel || 'nai-diffusion-5-full',
+        uiVibes,
+        serverVibes: viaPlugin ? naiServerVibeNames : null,
+    });
+    const model = look.model;
+    if (!viaPlugin && look.vibes.length) toastr.warning('Серверный плагин nai-vibe не установлен — вайбы пропущены', 'SLAY Images', { timeOut: 4000 });
+    if (viaPlugin && look.missing.length && naiMissingVibesWarned !== look.missing.join(',')) {
+        naiMissingVibesWarned = look.missing.join(',');
+        iigLog('WARN', `NovelAI: house vibes missing on the server: ${look.missing.join(', ')} (upload them as .naiv4vibe with these names)`);
+    }
     // steps=28 и размеры выше — потолок бесплатных генераций на Opus
     const body = nc.buildNaiPluginBody(instr, {
-        styleTags, negative, model, width, height,
-        quality: settings.novelaiQuality !== false, vibes: viaPlugin ? vibes : [], steps: 28, scale: 5,
+        styleTags, styleSuffix: look.styleSuffix, negative, model, width, height,
+        quality: settings.novelaiQuality !== false, vibes: viaPlugin ? look.vibes : [], steps: 28, scale: 5,
     });
     if (!viaPlugin && body.characters.length) {
         // ST's endpoint has no character slots: fold them into the base prompt so nothing is lost.
         body.prompt = [body.prompt, ...body.characters.map(c => c.prompt)].join(', ');
         toastr.warning('Серверный плагин nai-vibe не установлен — персонажи NovelAI V4 склеены в один промпт', 'SLAY Images', { timeOut: 5000 });
     }
-    iigLog('INFO', `NovelAI (${viaPlugin ? 'nai-vibe' : 'ST'}): model=${model}, ${width}x${height} (${aspectRatio}), chars=${body.characters.length}, coords=${body.characters.some(c => c.center)}, bubbles=${instr.bubbles.length}, vibes=${body.vibes.length}`);
+    iigLog('INFO', `NovelAI (${viaPlugin ? 'nai-vibe' : 'ST'}): model=${model}${look.fromBlock ? ' (from block)' : ''}, ${width}x${height} (${aspectRatio}), chars=${body.characters.length}, coords=${body.characters.some(c => c.center)}, bubbles=${instr.bubbles.length}, vibes=${body.vibes.map(v => `${v.name}:${v.strength}`).join(' ') || 'none'}`);
     iigLog('INFO', `NovelAI prompt: ${body.prompt.slice(0, 300)}`);
     for (const c of body.characters) iigLog('INFO', `NovelAI char${c.center ? ` @${c.center.x},${c.center.y}` : ''}: ${c.prompt.slice(0, 200)}${c.uc ? ` | uc: ${c.uc.slice(0, 120)}` : ''}`);
     iigLog('INFO', `NovelAI negative: ${body.negative_prompt.slice(0, 300)}`);
@@ -6619,7 +6635,7 @@ function createSettingsUI() {
                     <div class="flex-row ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_negative_row"><label>Negative</label><input type="text" id="slay_novelai_negative" class="text_pole flex1" value="${sanitizeForHtml(settings.novelaiNegativePrompt || '')}" placeholder="что исключить (можно пусто)"></div>
                     <label class="checkbox_label ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_quality_row"><input type="checkbox" id="slay_novelai_quality" ${settings.novelaiQuality !== false ? 'checked' : ''}><span style="font-size:0.85em;opacity:0.85;">Теги качества, как на сайте NAI (very aesthetic, masterpiece)</span></label>
                     <div class="${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_vibes_row" style="margin-top:4px;">
-                        <div class="flex-row"><label>Вайбы</label><div class="flex1" style="font-size:0.85em;opacity:0.85;">стиль с картинки-образца (.naiv4vibe); сила 0.2–0.6 обычно</div><label class="menu_button" title="Загрузить .naiv4vibe" style="margin:0;"><i class="fa-solid fa-upload"></i><input type="file" id="slay_novelai_vibe_file" accept=".naiv4vibe,.json" multiple hidden></label></div>
+                        <div class="flex-row"><label>Вайбы</label><div class="flex1" style="font-size:0.85em;opacity:0.85;">стиль с картинки-образца (.naiv4vibe); сила 0.2–0.6 обычно. Без галочек на 4.5 идёт домашний набор (violet 0.6 + red 0.2, ночь: violet + dan); на V5 вайбы всегда выключены</div><label class="menu_button" title="Загрузить .naiv4vibe" style="margin:0;"><i class="fa-solid fa-upload"></i><input type="file" id="slay_novelai_vibe_file" accept=".naiv4vibe,.json" multiple hidden></label></div>
                         <div id="slay_novelai_vibe_list"></div>
                     </div>
                     <div class="flex-row" id="slay_style_row"><label>Стиль</label><div class="flex1" style="display:flex;gap:6px;align-items:center;min-width:0;"><span id="slay_style_name" style="flex:1;min-width:30px;font-size:0.8em;opacity:0.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${settings.slayStyleName || 'Не заменять'}</span><div id="slay_style_pick_btn" class="menu_button" style="white-space:nowrap;flex-shrink:0;display:inline-flex;align-items:center;gap:7px;"><i class="fa-solid fa-palette"></i><span>Выбрать</span></div></div></div>

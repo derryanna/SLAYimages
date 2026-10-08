@@ -15,6 +15,67 @@ export const BLANK_BUBBLE_NEGATIVES = ['text', 'english text', 'letters', 'writi
 const VALID_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9'];
 const CYRILLIC_RE = /[Ѐ-ӿԀ-ԯ]+/g;
 
+// ─────────────────────────── per-image model / look ───────────────────────────
+
+export const NAI_MODEL_45 = 'nai-diffusion-4-5-full';
+export const NAI_MODEL_V5 = 'nai-diffusion-5-full';
+
+// What the block may write into "model" (or "look"). Anything else → null → the UI setting wins.
+const MODEL_ALIASES = {
+    '4.5': NAI_MODEL_45, 'v4.5': NAI_MODEL_45, '45': NAI_MODEL_45, 'v45': NAI_MODEL_45, 'hot': NAI_MODEL_45,
+    'nai-diffusion-4-5-full': NAI_MODEL_45, 'nai-diffusion-4-5-curated': 'nai-diffusion-4-5-curated',
+    'v5': NAI_MODEL_V5, '5': NAI_MODEL_V5, 'clean': NAI_MODEL_V5, 'nai-diffusion-5-full': NAI_MODEL_V5,
+};
+
+export function normalizeNaiModel(v) {
+    const s = String(v ?? '').trim().toLowerCase();
+    return MODEL_ALIASES[s] || null;
+}
+
+export function isNaiV5(model) {
+    return /^nai-diffusion-5/.test(String(model || ''));
+}
+
+// House vibes for 4.5 (names of .naiv4vibe files on the server; see README).
+// violet = s3 (painterly skin, muted colours), red = s1 (warmth; 0.2 — above that it tints the hair),
+// dan = the Danone panel crop for night/intimate scenes.
+export const NAI_HOUSE_VIBES = {
+    day: [{ name: 'violet', strength: 0.6 }, { name: 'red', strength: 0.2 }],
+    night: [{ name: 'violet', strength: 0.6 }, { name: 'dan', strength: 0.35 }],
+};
+
+// V5 has no vibes; this phrase at the end of the base does the same job there.
+export const NAI_V5_SUFFIX = 'soft painterly shading, moody low key light, faces close and large in frame';
+
+/**
+ * Model, vibes and base suffix for one image.
+ *   instr.model (from the block) beats settingsModel; absent → settingsModel.
+ *   V5: vibes always off (V5 rejects 4.5 vibes) + NAI_V5_SUFFIX.
+ *   4.5: the vibes ticked in the UI; none ticked → house set (night when the base is nsfw),
+ *        limited to the vibe names the server actually has when serverVibes is given.
+ */
+export function resolveNaiLook(instr, { settingsModel, uiVibes = [], serverVibes = null } = {}) {
+    const model = instr?.model || settingsModel || NAI_MODEL_V5;
+    const v5 = isNaiV5(model);
+    let vibes = [];
+    let missing = [];
+    if (!v5) {
+        if (uiVibes.length) {
+            vibes = uiVibes.map(v => ({ name: v.name, strength: v.strength }));
+        } else {
+            const house = instr?.nsfw ? NAI_HOUSE_VIBES.night : NAI_HOUSE_VIBES.day;
+            if (Array.isArray(serverVibes)) {
+                const have = new Set(serverVibes.map(n => String(n).toLowerCase()));
+                vibes = house.filter(v => have.has(v.name));
+                missing = house.filter(v => !have.has(v.name)).map(v => v.name);
+            } else {
+                vibes = house.slice();
+            }
+        }
+    }
+    return { model, v5, vibes, styleSuffix: v5 ? NAI_V5_SUFFIX : '', fromBlock: !!instr?.model, missing };
+}
+
 // ─────────────────────────── instruction parsing ───────────────────────────
 
 // ST can entity-encode non-ASCII inside the data-iig-instruction attribute ("&#1040;…").
@@ -120,6 +181,9 @@ export function parseNaiInstruction(data) {
         aspectRatio: normalizeRatio(d.aspect_ratio ?? d.aspectRatio),
         comic,
         negative: cleanTags(d.negative || d.uc || ''),
+        // Block-chosen model ("4.5" | "v5", or a "look"); null = UI setting.
+        model: normalizeNaiModel(d.model ?? d.look),
+        nsfw: /\bnsfw\b|\bexplicit\b/i.test(base),
     };
 }
 
@@ -167,12 +231,14 @@ export function composeNaiNegative(settingsNegative, instr) {
     return dedupeTags(tags).join(', ');
 }
 
-/** Base caption: style tags first, then the scene. */
-export function composeNaiPrompt(instr, styleTags) {
+/** Base caption: style tags first, then the scene, then the per-model suffix (V5 phrase). */
+export function composeNaiPrompt(instr, styleTags, styleSuffix = '') {
     const parts = [];
     const style = cleanTags(styleTags);
     if (style) parts.push(style);
     if (instr.base) parts.push(instr.base);
+    const suffix = cleanTags(styleSuffix);
+    if (suffix) parts.push(suffix);
     let prompt = dedupeTags(splitTags(parts.join(', '))).join(', ');
     if (instr.bubbles?.length && !/speech bubble/i.test(prompt)) prompt += ', speech bubble, blank speech bubble';
     return prompt;
@@ -186,7 +252,7 @@ export function buildNaiPluginBody(instr, opts = {}) {
         return out;
     });
     return {
-        prompt: composeNaiPrompt(instr, opts.styleTags),
+        prompt: composeNaiPrompt(instr, opts.styleTags, opts.styleSuffix),
         characters,
         negative_prompt: composeNaiNegative(opts.negative, instr),
         model: opts.model,

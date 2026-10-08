@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
     parseNaiInstruction, naiStyleTags, composeNaiNegative, composeNaiPrompt, buildNaiPluginBody,
     findBubbleRegions, wrapText, fitText, layoutBubbles, renderBubbles, decodeEntities, BLANK_BUBBLE_NEGATIVES,
+    normalizeNaiModel, resolveNaiLook, NAI_MODEL_45, NAI_MODEL_V5, NAI_HOUSE_VIBES, NAI_V5_SUFFIX,
 } from '../nai-comics.js';
 
 // Monospace-ish stub: every character is 0.55 em wide.
@@ -258,4 +259,83 @@ test('findBubbleRegions rejects a pale beige wall framed by dark lines (not pape
     ellipse(img, 150, 120, 62, 72, [20, 20, 20]);
     ellipse(img, 150, 120, 60, 70, [236, 230, 222]);   // beige, passes the loose white test
     assert.equal(findBubbleRegions(img).length, 0);
+});
+
+// ───────── per-image model switch (round 3) ─────────
+
+test('instruction "model" / "look" is normalised; absent or unknown → null', () => {
+    assert.equal(parseNaiInstruction({ base: '1girl', model: '4.5' }).model, NAI_MODEL_45);
+    assert.equal(parseNaiInstruction({ base: '1girl', model: 'V5' }).model, NAI_MODEL_V5);
+    assert.equal(parseNaiInstruction({ base: '1girl', model: 'nai-diffusion-5-full' }).model, NAI_MODEL_V5);
+    assert.equal(parseNaiInstruction({ base: '1girl', look: 'hot' }).model, NAI_MODEL_45);
+    assert.equal(parseNaiInstruction({ base: '1girl', look: 'clean' }).model, NAI_MODEL_V5);
+    assert.equal(parseNaiInstruction({ base: '1girl' }).model, null);
+    assert.equal(parseNaiInstruction({ base: '1girl', model: 'dall-e' }).model, null);
+    assert.equal(parseNaiInstruction({ prompt: '1girl' }).model, null, 'plain prompts have no model');
+    assert.equal(normalizeNaiModel(undefined), null);
+    assert.equal(parseNaiInstruction('{"base":"1boy, 1girl","model":"v5"}').model, NAI_MODEL_V5, 'JSON string input');
+});
+
+test('nsfw is read from the base', () => {
+    assert.equal(parseNaiInstruction({ base: 'nsfw, 1boy, 1girl, on bed' }).nsfw, true);
+    assert.equal(parseNaiInstruction({ base: '1boy, 1girl, kitchen, morning' }).nsfw, false);
+});
+
+test('resolveNaiLook: block model beats the UI model, absent model keeps the UI model', () => {
+    const fromBlock = resolveNaiLook(parseNaiInstruction({ base: '1girl', model: '4.5' }), { settingsModel: NAI_MODEL_V5 });
+    assert.equal(fromBlock.model, NAI_MODEL_45);
+    assert.equal(fromBlock.fromBlock, true);
+    const fromUi = resolveNaiLook(parseNaiInstruction({ base: '1girl' }), { settingsModel: NAI_MODEL_45 });
+    assert.equal(fromUi.model, NAI_MODEL_45);
+    assert.equal(fromUi.fromBlock, false);
+    assert.equal(resolveNaiLook(parseNaiInstruction({ base: '1girl' }), {}).model, NAI_MODEL_V5, 'default model');
+});
+
+test('resolveNaiLook: V5 turns vibes off even when ticked, and adds the V5 phrase', () => {
+    const ui = [{ name: 'violet', strength: 0.6, enabled: true }];
+    const look = resolveNaiLook(parseNaiInstruction({ base: 'nsfw, 1boy, 1girl, on bed', model: 'v5' }), { settingsModel: NAI_MODEL_45, uiVibes: ui });
+    assert.equal(look.model, NAI_MODEL_V5);
+    assert.equal(look.v5, true);
+    assert.deepEqual(look.vibes, []);
+    assert.equal(look.styleSuffix, NAI_V5_SUFFIX);
+    assert.deepEqual(look.missing, []);
+});
+
+test('resolveNaiLook: 4.5 uses the ticked vibes, or the house set when none is ticked', () => {
+    const ui = [{ name: 'favourite', strength: 0.4 }];
+    const ticked = resolveNaiLook(parseNaiInstruction({ base: '1boy, 1girl', model: '4.5' }), { uiVibes: ui });
+    assert.deepEqual(ticked.vibes, [{ name: 'favourite', strength: 0.4 }]);
+    assert.equal(ticked.styleSuffix, '');
+    const day = resolveNaiLook(parseNaiInstruction({ base: '1boy, 1girl, kitchen, morning', model: '4.5' }), {});
+    assert.deepEqual(day.vibes, NAI_HOUSE_VIBES.day);
+    const night = resolveNaiLook(parseNaiInstruction({ base: 'nsfw, 1boy, 1girl, on bed', model: '4.5' }), {});
+    assert.deepEqual(night.vibes, NAI_HOUSE_VIBES.night);
+    assert.deepEqual(NAI_HOUSE_VIBES.day, [{ name: 'violet', strength: 0.6 }, { name: 'red', strength: 0.2 }]);
+    assert.deepEqual(NAI_HOUSE_VIBES.night, [{ name: 'violet', strength: 0.6 }, { name: 'dan', strength: 0.35 }]);
+    // the UI model alone (no block model) also gets the house set on 4.5 when nothing is ticked
+    const uiOnly = resolveNaiLook(parseNaiInstruction({ base: '1boy, 1girl' }), { settingsModel: NAI_MODEL_45 });
+    assert.deepEqual(uiOnly.vibes, NAI_HOUSE_VIBES.day);
+});
+
+test('resolveNaiLook: house vibes are limited to what the server has, the rest is reported', () => {
+    const look = resolveNaiLook(parseNaiInstruction({ base: '1boy, 1girl', model: '4.5' }), { serverVibes: ['violet', 'favourite'] });
+    assert.deepEqual(look.vibes, [{ name: 'violet', strength: 0.6 }]);
+    assert.deepEqual(look.missing, ['red']);
+    const none = resolveNaiLook(parseNaiInstruction({ base: '1boy, 1girl', model: '4.5' }), { serverVibes: [] });
+    assert.deepEqual(none.vibes, []);
+    assert.deepEqual(none.missing, ['violet', 'red']);
+});
+
+test('buildNaiPluginBody appends the V5 phrase after the scene, once', () => {
+    const i = parseNaiInstruction({ base: '1boy, solo, upper body, night, lonely mood, soft painterly shading', model: 'v5' });
+    const look = resolveNaiLook(i, { settingsModel: NAI_MODEL_45 });
+    const body = buildNaiPluginBody(i, { styleTags: 'muted colors', styleSuffix: look.styleSuffix, negative: 'lowres', model: look.model, vibes: look.vibes });
+    assert.equal(body.model, NAI_MODEL_V5);
+    assert.deepEqual(body.vibes, []);
+    assert.equal(body.prompt, 'muted colors, 1boy, solo, upper body, night, lonely mood, soft painterly shading, moody low key light, faces close and large in frame');
+    const i45 = parseNaiInstruction({ base: '1boy, 1girl, kitchen', model: '4.5' });
+    const look45 = resolveNaiLook(i45, {});
+    const body45 = buildNaiPluginBody(i45, { styleTags: 'muted colors', styleSuffix: look45.styleSuffix, negative: 'lowres', model: look45.model, vibes: look45.vibes });
+    assert.equal(body45.prompt, 'muted colors, 1boy, 1girl, kitchen');
+    assert.equal(body45.vibes.length, 2);
 });
