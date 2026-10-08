@@ -328,6 +328,29 @@ test('resolveNaiLook: house vibes are limited to what the server has, the rest i
     assert.deepEqual(none.missing, ['aur10']);
 });
 
+test('dedupe keeps NovelAI weight groups whole and compares whole tokens', () => {
+    const i = parseNaiInstruction({ base: 'anime, 1girl, realistic' });
+    const style = '1.5::anime coloring, anime, anime style::, 1.4::nekido::, 1.5::realistic, photorealistic::';
+    assert.equal(composeNaiPrompt(i, style), '1.5::anime coloring, anime, anime style::, 1.4::nekido::, 1.5::realistic, photorealistic::, anime, 1girl, realistic');
+    assert.equal(composeNaiPrompt(parseNaiInstruction({ base: '1girl, 1girl, smile' }), '-2::multiple images::, -2::multiple images::'), '-2::multiple images::, 1girl, smile');
+    assert.equal(composeNaiNegative('lowres, 1.2::bad hands, extra digits::, lowres', { negative: 'extra digits' }), 'lowres, 1.2::bad hands, extra digits::, extra digits');
+});
+
+test('buildNaiPluginBody carries the knobs only when set', () => {
+    const i = parseNaiInstruction({ base: '1girl' });
+    const plain = buildNaiPluginBody(i, { styleTags: '', negative: '', model: NAI_MODEL_45 });
+    assert.equal(plain.cfg_rescale, undefined); assert.equal(plain.seed, undefined);
+    assert.equal(plain.skip_cfg_above_sigma, undefined); assert.equal(plain.allow_anlas, undefined);
+    const full = buildNaiPluginBody(i, {
+        styleTags: '', negative: '', model: NAI_MODEL_45, sampler: 'k_dpmpp_2m', scheduler: 'native',
+        steps: 30, scale: 6.5, cfgRescale: 0.2, seed: 123.9, skipCfgAboveSigma: 19, allowAnlas: true,
+    });
+    assert.equal(full.sampler, 'k_dpmpp_2m'); assert.equal(full.scheduler, 'native');
+    assert.equal(full.steps, 30); assert.equal(full.scale, 6.5);
+    assert.equal(full.cfg_rescale, 0.2); assert.equal(full.seed, 123); assert.equal(full.skip_cfg_above_sigma, 19); assert.equal(full.allow_anlas, true);
+    assert.equal(buildNaiPluginBody(i, { model: NAI_MODEL_45, seed: -1, skipCfgAboveSigma: 0 }).seed, undefined, 'seed -1 = random');
+});
+
 test('buildNaiPluginBody appends the V5 phrase after the scene, once', () => {
     const i = parseNaiInstruction({ base: '1boy, solo, upper body, night, lonely mood, soft painterly shading', model: 'v5' });
     const look = resolveNaiLook(i, { settingsModel: NAI_MODEL_45 });

@@ -202,8 +202,16 @@ export function naiStyleTags(styleValue) {
     return cleanTags(s);
 }
 
+// Split a tag list on commas, keeping NovelAI weight groups whole:
+// "1.5::anime coloring, anime, anime style::, 1.4::nekido::" → two tokens, not four.
+const TAG_TOKEN_RE = /\s*(-?\d*\.?\d+::[\s\S]*?::|[^,]+)/g;
 function splitTags(s) {
-    return cleanTags(s).split(/\s*,\s*/).map(t => t.trim()).filter(Boolean);
+    const out = [];
+    for (const m of cleanTags(s).matchAll(TAG_TOKEN_RE)) {
+        const t = m[1].trim();
+        if (t) out.push(t);
+    }
+    return out;
 }
 
 function dedupeTags(list) {
@@ -252,7 +260,7 @@ export function buildNaiPluginBody(instr, opts = {}) {
         if (c.center) out.center = { x: c.center.x, y: c.center.y };
         return out;
     });
-    return {
+    const body = {
         prompt: composeNaiPrompt(instr, opts.styleTags, opts.styleSuffix),
         characters,
         negative_prompt: composeNaiNegative(opts.negative, instr),
@@ -266,6 +274,12 @@ export function buildNaiPluginBody(instr, opts = {}) {
         quality: opts.quality !== false,
         vibes: opts.vibes || [],
     };
+    // Knobs from the settings panel; absent → the plugin's defaults (0 / random / off).
+    if (Number.isFinite(Number(opts.cfgRescale))) body.cfg_rescale = Number(opts.cfgRescale);
+    if (Number.isFinite(Number(opts.seed)) && Number(opts.seed) >= 0) body.seed = Math.floor(Number(opts.seed));
+    if (Number(opts.skipCfgAboveSigma) > 0) body.skip_cfg_above_sigma = Number(opts.skipCfgAboveSigma);
+    if (opts.allowAnlas === true) body.allow_anlas = true;
+    return body;
 }
 
 // ─────────────────────────── bubble detection ───────────────────────────

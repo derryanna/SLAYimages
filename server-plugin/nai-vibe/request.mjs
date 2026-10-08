@@ -28,12 +28,15 @@ function hasCenter(c) {
 }
 
 // What the NovelAI site adds with "Add Quality Tags" on; "no text" only when no lettering is wanted.
+// Tags the prompt already carries (library styles include them) are not repeated.
 export function withQuality(prompt) {
     const textAt = prompt.search(/\bText:/);
     const body = (textAt >= 0 ? prompt.slice(0, textAt) : prompt).trim().replace(/,\s*$/, '');
     const tail = textAt >= 0 ? ' ' + prompt.slice(textAt).trim() : '';
     const wantsText = textAt >= 0 || /speech bubble|comic|text/i.test(body);
-    return `${body}, very aesthetic, masterpiece${wantsText ? '' : ', no text'}${tail}`;
+    const have = new Set(body.split(',').map(t => t.trim().toLowerCase()));
+    const add = ['very aesthetic', 'masterpiece', ...(wantsText ? [] : ['no text'])].filter(t => !have.has(t));
+    return add.length ? `${body}, ${add.join(', ')}${tail}` : `${body}${tail}`;
 }
 
 // Normalise the characters array from the request body: trims, caps the count,
@@ -56,15 +59,23 @@ export function normalizeCharacters(list) {
 }
 
 // Free-tier guard: Opus generations are free up to 1 MP and 28 steps.
-export function clampSize(width, height) {
+// allow_anlas: true in the body lifts it to the API ceiling (3 MP, 50 steps).
+export function clampSize(width, height, maxPixels = MAX_FREE_PIXELS) {
     let w = Math.max(64, Math.round(Number(width) || 832));
     let h = Math.max(64, Math.round(Number(height) || 1216));
-    if (w * h > MAX_FREE_PIXELS) {
-        const k = Math.sqrt(MAX_FREE_PIXELS / (w * h));
+    if (w * h > maxPixels) {
+        const k = Math.sqrt(maxPixels / (w * h));
         w = Math.floor(w * k / 64) * 64;
         h = Math.floor(h * k / 64) * 64;
     }
     return [w, h];
+}
+
+export const MAX_PIXELS = 3145728;
+export const MAX_STEPS_ANLAS = 50;
+
+export function isV5(model) {
+    return /^nai-diffusion-5/.test(String(model || ''));
 }
 
 /**
@@ -75,7 +86,8 @@ export function clampSize(width, height) {
  *   characters         [{ prompt, uc, center: { x, y } }] up to 6; center optional
  *   negative_prompt    base negative
  *   use_coords         optional override; default: true when any character carries a center
- *   model, width, height, scale, sampler, steps, seed, scheduler, quality
+ *   model, width, height, scale, sampler, steps, seed, scheduler, quality,
+ *   cfg_rescale, skip_cfg_above_sigma (4.5 only), allow_anlas (lift the free-tier clamp)
  * @param {Array<{encoding:string, strength:number, ie:number}>} refs vibe encodings
  */
 export function buildGenerateRequest(b = {}, refs = []) {
@@ -85,7 +97,9 @@ export function buildGenerateRequest(b = {}, refs = []) {
     const negative = String(b.negative_prompt || '');
     const characters = normalizeCharacters(b.characters);
     const useCoords = typeof b.use_coords === 'boolean' ? b.use_coords : characters.some(c => c.hasCenter);
-    const [width, height] = clampSize(b.width, b.height);
+    const anlas = b.allow_anlas === true;
+    const [width, height] = clampSize(b.width, b.height, anlas ? MAX_PIXELS : MAX_FREE_PIXELS);
+    const maxSteps = anlas ? MAX_STEPS_ANLAS : MAX_STEPS;
 
     const charCaptions = characters.map(c => ({ char_caption: c.prompt, centers: [c.center] }));
     const charNegCaptions = characters.map(c => ({ char_caption: c.uc, centers: [c.center] }));
@@ -96,7 +110,7 @@ export function buildGenerateRequest(b = {}, refs = []) {
         height,
         scale: Number.isFinite(Number(b.scale)) ? Number(b.scale) : 5,
         sampler: b.sampler || 'k_euler_ancestral',
-        steps: Math.min(Number(b.steps) || MAX_STEPS, MAX_STEPS),
+        steps: Math.min(Number(b.steps) || MAX_STEPS, maxSteps),
         n_samples: 1,
         seed: Number(b.seed) >= 0 ? Math.floor(Number(b.seed)) : Math.floor(Math.random() * 4294967295),
         noise_schedule: b.scheduler || 'karras',
@@ -133,5 +147,11 @@ export function buildGenerateRequest(b = {}, refs = []) {
         reference_information_extracted_multiple: refs.map(r => r.ie),
         normalize_reference_strength_multiple: true,
     };
+    if (Number(b.skip_cfg_above_sigma) > 0) parameters.skip_cfg_above_sigma = Number(b.skip_cfg_above_sigma);
+    // V5 has a fixed noise schedule and no CFG delay.
+    if (isV5(model)) {
+        delete parameters.noise_schedule;
+        delete parameters.skip_cfg_above_sigma;
+    }
     return { action: 'generate', input: prompt, model, parameters };
 }

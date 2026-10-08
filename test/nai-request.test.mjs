@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import { buildGenerateRequest, snapToGrid, normalizeCharacters, withQuality, clampSize } from '../server-plugin/nai-vibe/request.mjs';
 
 test('plain prompt request is backward compatible', () => {
-    const r = buildGenerateRequest({ prompt: '1girl, blonde hair, smile', negative_prompt: 'lowres', width: 832, height: 1216 });
+    const r = buildGenerateRequest({ prompt: '1girl, blonde hair, smile', negative_prompt: 'lowres', width: 832, height: 1216, model: 'nai-diffusion-4-5-full' });
     assert.equal(r.action, 'generate');
-    assert.equal(r.model, 'nai-diffusion-5-full');
+    assert.equal(r.model, 'nai-diffusion-4-5-full');
     assert.equal(r.input, '1girl, blonde hair, smile, very aesthetic, masterpiece, no text');
     const p = r.parameters;
     assert.equal(p.params_version, 3);
@@ -16,6 +16,8 @@ test('plain prompt request is backward compatible', () => {
     assert.equal(p.scale, 5);
     assert.equal(p.sampler, 'k_euler_ancestral');
     assert.equal(p.noise_schedule, 'karras');
+    assert.equal(p.cfg_rescale, 0);
+    assert.equal(p.skip_cfg_above_sigma, undefined);
     assert.equal(p.use_coords, false);
     assert.deepEqual(p.characterPrompts, []);
     assert.deepEqual(p.v4_prompt.caption, { base_caption: r.input, char_captions: [] });
@@ -118,4 +120,33 @@ test('seed is honoured when given, random otherwise', () => {
     assert.equal(buildGenerateRequest({ prompt: 'x', seed: 42 }).parameters.seed, 42);
     const s = buildGenerateRequest({ prompt: 'x' }).parameters.seed;
     assert.ok(Number.isInteger(s) && s >= 0);
+});
+
+test('withQuality does not repeat tags the prompt already has (library styles carry them)', () => {
+    assert.equal(withQuality('artist:x, masterpiece, very aesthetic, 1girl'), 'artist:x, masterpiece, very aesthetic, 1girl, no text');
+    assert.equal(withQuality('Very Aesthetic, masterpiece, comic'), 'Very Aesthetic, masterpiece, comic');
+    assert.equal(withQuality('masterpiece, 1girl, Text: hi'), 'masterpiece, 1girl, very aesthetic Text: hi');
+});
+
+test('cfg_rescale and skip_cfg_above_sigma pass through; V5 drops noise_schedule and skip-cfg', () => {
+    const p45 = buildGenerateRequest({ prompt: 'x', model: 'nai-diffusion-4-5-full', cfg_rescale: 0.3, skip_cfg_above_sigma: 19, scheduler: 'native' }).parameters;
+    assert.equal(p45.cfg_rescale, 0.3);
+    assert.equal(p45.skip_cfg_above_sigma, 19);
+    assert.equal(p45.noise_schedule, 'native');
+    const p5 = buildGenerateRequest({ prompt: 'x', model: 'nai-diffusion-5-full', cfg_rescale: 0.3, skip_cfg_above_sigma: 19 }).parameters;
+    assert.equal(p5.cfg_rescale, 0.3);
+    assert.equal(p5.noise_schedule, undefined);
+    assert.equal(p5.skip_cfg_above_sigma, undefined);
+    assert.equal(buildGenerateRequest({ prompt: 'x', model: 'nai-diffusion-4-5-full', skip_cfg_above_sigma: 0 }).parameters.skip_cfg_above_sigma, undefined, '0 = off');
+});
+
+test('allow_anlas lifts the free-tier clamp to 3 MP / 50 steps', () => {
+    const p = buildGenerateRequest({ prompt: 'x', steps: 40, width: 1536, height: 1536, allow_anlas: true }).parameters;
+    assert.equal(p.steps, 40);
+    assert.deepEqual([p.width, p.height], [1536, 1536]);
+    const q = buildGenerateRequest({ prompt: 'x', steps: 80, width: 2048, height: 2048, allow_anlas: true }).parameters;
+    assert.equal(q.steps, 50);
+    assert.ok(q.width * q.height <= 3145728);
+    const r = buildGenerateRequest({ prompt: 'x', steps: 40, width: 1536, height: 1536, allow_anlas: 'yes' }).parameters;
+    assert.equal(r.steps, 28, 'only a boolean true lifts the clamp');
 });
