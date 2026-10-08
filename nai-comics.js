@@ -40,8 +40,9 @@ export function isNaiV5(model) {
 // violet = s3 (painterly skin, muted colours), red = s1 (warmth; 0.2 — above that it tints the hair),
 // dan = the Danone panel crop for night/intimate scenes.
 export const NAI_HOUSE_VIBES = {
-    day: [{ name: 'violet', strength: 0.6 }, { name: 'red', strength: 0.2 }],
-    night: [{ name: 'violet', strength: 0.6 }, { name: 'dan', strength: 0.35 }],
+    // Anna's pick 8 Oct 2026: the vibe made from her own Aurora reference, alone (sheet «1 E3, глаза»)
+    day: [{ name: 'aur10', strength: 0.6 }],
+    night: [{ name: 'aur10', strength: 0.6 }],
 };
 
 // V5 has no vibes; this phrase at the end of the base does the same job there.

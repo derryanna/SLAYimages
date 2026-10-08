@@ -310,20 +310,22 @@ test('resolveNaiLook: 4.5 uses the ticked vibes, or the house set when none is t
     assert.deepEqual(day.vibes, NAI_HOUSE_VIBES.day);
     const night = resolveNaiLook(parseNaiInstruction({ base: 'nsfw, 1boy, 1girl, on bed', model: '4.5' }), {});
     assert.deepEqual(night.vibes, NAI_HOUSE_VIBES.night);
-    assert.deepEqual(NAI_HOUSE_VIBES.day, [{ name: 'violet', strength: 0.6 }, { name: 'red', strength: 0.2 }]);
-    assert.deepEqual(NAI_HOUSE_VIBES.night, [{ name: 'violet', strength: 0.6 }, { name: 'dan', strength: 0.35 }]);
+    assert.deepEqual(NAI_HOUSE_VIBES.day, [{ name: 'aur10', strength: 0.6 }]);
+    assert.deepEqual(NAI_HOUSE_VIBES.night, [{ name: 'aur10', strength: 0.6 }]);
     // the UI model alone (no block model) also gets the house set on 4.5 when nothing is ticked
     const uiOnly = resolveNaiLook(parseNaiInstruction({ base: '1boy, 1girl' }), { settingsModel: NAI_MODEL_45 });
     assert.deepEqual(uiOnly.vibes, NAI_HOUSE_VIBES.day);
 });
 
 test('resolveNaiLook: house vibes are limited to what the server has, the rest is reported', () => {
-    const look = resolveNaiLook(parseNaiInstruction({ base: '1boy, 1girl', model: '4.5' }), { serverVibes: ['violet', 'favourite'] });
-    assert.deepEqual(look.vibes, [{ name: 'violet', strength: 0.6 }]);
-    assert.deepEqual(look.missing, ['red']);
+    const look = resolveNaiLook(parseNaiInstruction({ base: '1boy, 1girl', model: '4.5' }), { serverVibes: ['aur10', 'favourite'] });
+    assert.deepEqual(look.vibes, [{ name: 'aur10', strength: 0.6 }]);
+    assert.deepEqual(look.missing, []);
+    const absent = resolveNaiLook(parseNaiInstruction({ base: '1boy, 1girl', model: '4.5' }), { serverVibes: ['violet'] });
+    assert.deepEqual(absent.missing, ['aur10']);
     const none = resolveNaiLook(parseNaiInstruction({ base: '1boy, 1girl', model: '4.5' }), { serverVibes: [] });
     assert.deepEqual(none.vibes, []);
-    assert.deepEqual(none.missing, ['violet', 'red']);
+    assert.deepEqual(none.missing, ['aur10']);
 });
 
 test('buildNaiPluginBody appends the V5 phrase after the scene, once', () => {
@@ -337,5 +339,5 @@ test('buildNaiPluginBody appends the V5 phrase after the scene, once', () => {
     const look45 = resolveNaiLook(i45, {});
     const body45 = buildNaiPluginBody(i45, { styleTags: 'muted colors', styleSuffix: look45.styleSuffix, negative: 'lowres', model: look45.model, vibes: look45.vibes });
     assert.equal(body45.prompt, 'muted colors, 1boy, 1girl, kitchen');
-    assert.equal(body45.vibes.length, 2);
+    assert.equal(body45.vibes.length, 1);
 });
