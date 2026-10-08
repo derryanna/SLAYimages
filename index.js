@@ -4444,6 +4444,8 @@ async function generateImageNaistera(prompt, style, options = {}) {
 // Эндпоинт жёстко шлёт reference_image_multiple: [] — рефы передать нельзя.
 // Домашний вид (раунд 2 nai-style): префикс + негатив, которые дали «фаворит» на обеих моделях.
 const NAI_DEFAULT_STYLE = 'muted colors, dim lighting, low key, detailed skin, glossy skin';
+// 4.5 house style (Anna's pick 8 Oct 2026, «Эйден» artist mix from the NovelAI site; pairs with the aur10 vibe).
+const NAI_DEFAULT_STYLE_45 = '0.8::lart_art1 ::, 1.6::zero_q_0q::, 0.7::etceteraart::, 1.3::dang0_23 ::, 0.9::lesly_oh::, 0.5::sasha_khmel::, -2::multiple images::, intricate details, perfect anatomy, realistic, highres_quality, ultra_detail, sidelighting, volumetric_shadow, chiaroscuro, photorealistic_background, depth_of_field, masterpiece, best quality, very aesthetic, absurdres, highly detailed, sharp focus';
 const NAI_DEFAULT_NEGATIVE = 'lowres, artistic error, worst quality, bad quality, jpeg artifacts, very displeasing, watermark, logo, signature, text, speech bubble, chibi, bad anatomy, bad hands, extra digits, fewer digits, animal ears, tattoo, flat color, flat shading, plastic skin, airbrushed';
 
 function mapRatioToNovelAISize(aspectRatio) {
@@ -4587,7 +4589,6 @@ async function generateImageNovelAI(prompt, style, options = {}) {
     const [width, height] = mapRatioToNovelAISize(aspectRatio);
     // NovelAI reads tags, not "[STYLE: … Avoid: …]" prose: keep only the tag part of the style.
     // Empty fields fall back to the house look: a blank negative made NovelAI images visibly cheaper.
-    const styleTags = nc.naiStyleTags(style) || NAI_DEFAULT_STYLE;
     const negative = (settings.novelaiNegativePrompt || '').trim() || NAI_DEFAULT_NEGATIVE;
     // Плагин nai-vibe умеет вайбы, теги качества и персонажные поля V4; без него — родной эндпоинт ST
     const viaPlugin = await novelaiPluginAvailable();
@@ -4600,6 +4601,7 @@ async function generateImageNovelAI(prompt, style, options = {}) {
         serverVibes: viaPlugin ? naiServerVibeNames : null,
     });
     const model = look.model;
+    const styleTags = nc.naiStyleTags(style) || (look.v5 ? NAI_DEFAULT_STYLE : NAI_DEFAULT_STYLE_45);
     if (!viaPlugin && look.vibes.length) toastr.warning('Серверный плагин nai-vibe не установлен — вайбы пропущены', 'SLAY Images', { timeOut: 4000 });
     if (viaPlugin && look.missing.length && naiMissingVibesWarned !== look.missing.join(',')) {
         naiMissingVibesWarned = look.missing.join(',');
