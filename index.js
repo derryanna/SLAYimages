@@ -4719,7 +4719,7 @@ async function openNaiLibraryModal(initialKind = 'styles') {
             activate(id);
             return;
         }
-        if (act === 'edit') { editing = editing === id ? null : id; render(); if (editing) row.querySelector('[data-f="name"]')?.focus?.(); return; }
+        if (act === 'edit') { editing = editing === id ? null : id; render(); if (editing) listEl.querySelector(`[data-id="${CSS.escape(id)}"] [data-f="name"]`)?.focus(); return; }
         if (act === 'dup') { const c = nl.duplicateNaiEntry(settings, kind, id); editing = c?.id || null; persist(); render(); return; }
         if (act === 'del') {
             const entry = nl.findNaiEntry(settings, kind, id);
