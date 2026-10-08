@@ -5,16 +5,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readSecret, SECRET_KEYS } from '../../src/endpoints/secrets.js';
 import { extractFileFromZipBuffer } from '../../src/util.js';
+import { MODEL_KEYS, buildGenerateRequest } from './request.mjs';
 
-export const info = { id: 'nai-vibe', name: 'NAI Vibe', description: 'NovelAI generation with pre-encoded vibe files.' };
+export const info = { id: 'nai-vibe', name: 'NAI Vibe', description: 'NovelAI generation with vibe files and V4 character prompts.' };
 
 const GENERATE_URL = 'https://image.novelai.net/ai/generate-image';
-const MODEL_KEYS = {
-    'nai-diffusion-4-5-full': 'v4-5full',
-    'nai-diffusion-4-5-curated': 'v4-5curated',
-    'nai-diffusion-4-full': 'v4full',
-    'nai-diffusion-4-curated-preview': 'v4curated',
-};
 
 function vibeDir(req) {
     const dir = path.join(req.user.directories.root, 'nai-vibes');
@@ -49,15 +44,6 @@ function pickEncoding(vibe, model) {
     if (!byHash) return null;
     const first = Object.values(byHash)[0];
     return first?.encoding ? { encoding: first.encoding, ie: first.params?.information_extracted ?? 1 } : null;
-}
-
-// What the NovelAI site adds with "Add Quality Tags" on; "no text" only when no lettering is wanted.
-function withQuality(prompt) {
-    const textAt = prompt.search(/\bText:/);
-    const body = (textAt >= 0 ? prompt.slice(0, textAt) : prompt).trim().replace(/,\s*$/, '');
-    const tail = textAt >= 0 ? ' ' + prompt.slice(textAt).trim() : '';
-    const wantsText = textAt >= 0 || /speech bubble/i.test(body);
-    return `${body}, very aesthetic, masterpiece${wantsText ? '' : ', no text'}${tail}`;
 }
 
 export async function init(router) {
@@ -101,44 +87,14 @@ export async function init(router) {
             if (!enc) return res.status(400).send(`Вайб «${v.name}» закодирован не для ${model} (есть: ${Object.keys(vibe.encodings).join(', ')}).`);
             refs.push({ ...enc, strength: Number(v.strength ?? vibe.importInfo?.strength ?? 0.6) });
         }
-        const prompt = b.quality === false ? String(b.prompt || '') : withQuality(String(b.prompt || ''));
-        const negative = String(b.negative_prompt || '');
-        const parameters = {
-            params_version: 3,
-            width: b.width || 832,
-            height: b.height || 1216,
-            scale: b.scale ?? 5,
-            sampler: b.sampler || 'k_euler_ancestral',
-            steps: Math.min(b.steps || 28, 28),
-            n_samples: 1,
-            seed: b.seed >= 0 ? b.seed : Math.floor(Math.random() * 4294967295),
-            noise_schedule: b.scheduler || 'karras',
-            ucPreset: 0,
-            qualityToggle: b.quality !== false,
-            prefer_brownian: true,
-            dynamic_thresholding: false,
-            legacy: false,
-            legacy_v3_extend: false,
-            sm: false,
-            sm_dyn: false,
-            add_original_image: false,
-            controlnet_strength: 1,
-            deliberate_euler_ancestral_bug: false,
-            use_coords: false,
-            characterPrompts: [],
-            negative_prompt: negative,
-            v4_prompt: { caption: { base_caption: prompt, char_captions: [] }, use_coords: false, use_order: true },
-            v4_negative_prompt: { caption: { base_caption: negative, char_captions: [] }, legacy_uc: false },
-            reference_image_multiple: refs.map(r => r.encoding),
-            reference_strength_multiple: refs.map(r => r.strength),
-            reference_information_extracted_multiple: refs.map(r => r.ie),
-            normalize_reference_strength_multiple: true,
-        };
+        // Plain { prompt } requests and structured { base, characters: [...] } requests both go through here.
+        const request = buildGenerateRequest({ ...b, model }, refs);
+        const parameters = request.parameters;
         try {
             const r = await fetch(GENERATE_URL, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'generate', input: prompt, model, parameters }),
+                body: JSON.stringify(request),
             });
             if (!r.ok) {
                 const text = await r.text();
@@ -147,7 +103,7 @@ export async function init(router) {
             }
             const png = await extractFileFromZipBuffer(await r.arrayBuffer(), '.png');
             if (!png) return res.status(502).send('NovelAI ответила без PNG.');
-            console.info(`[nai-vibe] ok ${model} ${parameters.width}x${parameters.height} vibes=${refs.length}`);
+            console.info(`[nai-vibe] ok ${model} ${parameters.width}x${parameters.height} chars=${parameters.characterPrompts.length} coords=${parameters.use_coords} vibes=${refs.length}`);
             res.send(png.toString('base64'));
         } catch (e) {
             console.error('[nai-vibe]', e);

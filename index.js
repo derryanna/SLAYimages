@@ -4515,35 +4515,93 @@ async function renderNovelaiVibes() {
     }));
 }
 
+// nai-comics.js: structured V4.5 instructions, tag-only style, bubble typesetting.
+// Loaded lazily so a missing file only breaks the NovelAI route, not the extension.
+let naiComicsModule = null;
+async function loadNaiComics() {
+    if (!naiComicsModule) {
+        naiComicsModule = import(new URL('./nai-comics.js', import.meta.url).href).catch(e => { naiComicsModule = null; throw e; });
+    }
+    return naiComicsModule;
+}
+
+async function loadImageElement(dataUrl) {
+    return await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Image decode failed'));
+        img.src = dataUrl;
+    });
+}
+
+// Draw the Russian lines into the (blank) bubbles NovelAI painted; draw our own bubble when none fits.
+async function typesetNaiBubbles(dataUrl, instr, nc) {
+    const img = await loadImageElement(dataUrl);
+    const W = img.naturalWidth, H = img.naturalHeight;
+    if (!W || !H) throw new Error('empty image');
+    // Detection runs on a ~320 px wide copy; the masks are scaled back up when painting.
+    const k = Math.min(1, 320 / W);
+    const sw = Math.max(1, Math.round(W * k)), sh = Math.max(1, Math.round(H * k));
+    const small = document.createElement('canvas'); small.width = sw; small.height = sh;
+    const sctx = small.getContext('2d', { willReadFrequently: true });
+    sctx.drawImage(img, 0, 0, sw, sh);
+    const regions = nc.findBubbleRegions(sctx.getImageData(0, 0, sw, sh));
+    const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    try { await document.fonts?.ready; } catch (_) { }
+    const placements = nc.layoutBubbles({ bubbles: instr.bubbles, characters: instr.characters, regions, width: W, height: H, measure: nc.makeMeasure(ctx) });
+    const maskCanvasFor = (r) => {
+        const m = r.mask;
+        const c = document.createElement('canvas'); c.width = m.w; c.height = m.h;
+        const mctx = c.getContext('2d');
+        const id = mctx.createImageData(m.w, m.h);
+        for (let i = 0; i < m.bits.length; i++) { if (m.bits[i]) id.data.fill(255, i * 4, i * 4 + 4); }
+        mctx.putImageData(id, 0, 0);
+        return c;
+    };
+    nc.renderBubbles(ctx, placements, { width: W, height: H, maskCanvasFor });
+    const inRegions = placements.filter(p => p.kind === 'region').length;
+    iigLog('INFO', `NovelAI bubbles: ${placements.length} lines, ${inRegions} in detected bubbles, ${placements.length - inRegions} drawn (white regions found: ${regions.length})`);
+    const out = canvas.toDataURL('image/png');
+    small.width = small.height = 0; canvas.width = canvas.height = 0;
+    return out;
+}
+
 async function generateImageNovelAI(prompt, style, options = {}) {
     const settings = getSettings();
     const ctx = SillyTavern.getContext();
     const model = settings.novelaiModel || 'nai-diffusion-4-5-full';
-    const aspectRatio = (settings.novelaiAspectRatio || 'auto') === 'auto' ? (options.aspectRatio || '1:1') : settings.novelaiAspectRatio;
+    const nc = await loadNaiComics();
+    // Structured { base, characters, bubbles } from the block, or the plain prompt (old "|" sections still split).
+    const instr = nc.parseNaiInstruction(options.instruction || { prompt });
+    const ratioSetting = settings.novelaiAspectRatio || 'auto';
+    const aspectRatio = ratioSetting === 'auto' ? (instr.aspectRatio || options.aspectRatio || '1:1') : ratioSetting;
     const [width, height] = mapRatioToNovelAISize(aspectRatio);
-    const fullPrompt = injectStyleBlock(prompt, style);
+    // NovelAI reads tags, not "[STYLE: … Avoid: …]" prose: keep only the tag part of the style.
+    const styleTags = nc.naiStyleTags(style);
     const vibes = (settings.novelaiVibes || []).filter(v => v.enabled).map(v => ({ name: v.name, strength: v.strength }));
-    // Плагин nai-vibe умеет вайбы и теги качества; без него — родной эндпоинт ST
+    // Плагин nai-vibe умеет вайбы, теги качества и персонажные поля V4; без него — родной эндпоинт ST
     const viaPlugin = await novelaiPluginAvailable();
     if (!viaPlugin && vibes.length) toastr.warning('Серверный плагин nai-vibe не установлен — вайбы пропущены', 'SLAY Images', { timeOut: 4000 });
-    iigLog('INFO', `NovelAI (${viaPlugin ? 'nai-vibe' : 'ST'}): model=${model}, ${width}x${height}, vibes=${viaPlugin ? vibes.length : 0}`);
     // steps=28 и размеры выше — потолок бесплатных генераций на Opus
+    const body = nc.buildNaiPluginBody(instr, {
+        styleTags, negative: settings.novelaiNegativePrompt || '', model, width, height,
+        quality: settings.novelaiQuality !== false, vibes: viaPlugin ? vibes : [], steps: 28, scale: 5,
+    });
+    if (!viaPlugin && body.characters.length) {
+        // ST's endpoint has no character slots: fold them into the base prompt so nothing is lost.
+        body.prompt = [body.prompt, ...body.characters.map(c => c.prompt)].join(', ');
+        toastr.warning('Серверный плагин nai-vibe не установлен — персонажи NovelAI V4 склеены в один промпт', 'SLAY Images', { timeOut: 5000 });
+    }
+    iigLog('INFO', `NovelAI (${viaPlugin ? 'nai-vibe' : 'ST'}): model=${model}, ${width}x${height} (${aspectRatio}), chars=${body.characters.length}, coords=${body.characters.some(c => c.center)}, bubbles=${instr.bubbles.length}, vibes=${body.vibes.length}`);
+    iigLog('INFO', `NovelAI prompt: ${body.prompt.slice(0, 300)}`);
+    for (const c of body.characters) iigLog('INFO', `NovelAI char${c.center ? ` @${c.center.x},${c.center.y}` : ''}: ${c.prompt.slice(0, 200)}${c.uc ? ` | uc: ${c.uc.slice(0, 120)}` : ''}`);
+    iigLog('INFO', `NovelAI negative: ${body.negative_prompt.slice(0, 300)}`);
     const response = await robustFetch(viaPlugin ? `${NAI_VIBE_API}/generate` : '/api/novelai/generate-image', {
         method: 'POST',
         headers: ctx.getRequestHeaders(),
-        body: JSON.stringify({
-            prompt: fullPrompt,
-            model: model,
-            sampler: 'k_euler_ancestral',
-            scheduler: 'karras',
-            steps: 28,
-            scale: 5,
-            width: width,
-            height: height,
-            negative_prompt: settings.novelaiNegativePrompt || '',
-            quality: settings.novelaiQuality !== false,
-            vibes,
-        }),
+        body: JSON.stringify(body),
     });
     if (!response.ok) {
         const text = await response.text().catch(() => '');
@@ -4553,7 +4611,12 @@ async function generateImageNovelAI(prompt, style, options = {}) {
     }
     const b64 = await response.text();
     if (!b64) throw new Error('NovelAI вернул пустой ответ');
-    return `data:image/png;base64,${b64}`;
+    let dataUrl = `data:image/png;base64,${b64}`;
+    if (instr.bubbles.length) {
+        try { dataUrl = await typesetNaiBubbles(dataUrl, instr, nc); }
+        catch (e) { iigLog('WARN', `NovelAI bubble typesetting failed, saving the raw image: ${e.message}`); }
+    }
+    return dataUrl;
 }
 
 // ── Validation ──
@@ -5360,9 +5423,9 @@ function attachRegenButton(imgEl) {
         let newImagePath = null;
         let errorMsg = null;
         try {
-            const result = await generateImageWithRetry(data.prompt, data.style, (s) => { if (overlayLabel?.isConnected) overlayLabel.textContent = s; }, {
+            const result = await generateImageWithRetry(data.prompt || data.base || '', data.style, (s) => { if (overlayLabel?.isConnected) overlayLabel.textContent = s; }, {
                 aspectRatio: data.aspect_ratio, imageSize: data.image_size,
-                quality: data.quality, preset: data.preset, messageId,
+                quality: data.quality, preset: data.preset, messageId, instruction: data,
             });
             if (overlayLabel?.isConnected) overlayLabel.textContent = 'Сохранение...';
             if (overlayTimer?.isConnected) overlayTimer.textContent = '';
@@ -5862,7 +5925,9 @@ async function parseImageTags(text, options = {}) {
         try {
             let normalizedJson = instructionJson.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#39;/g, "'").replace(/&#34;/g, '"').replace(/&amp;/g, '&');
             const data = JSON.parse(normalizedJson);
-            tags.push({ fullMatch: fullImgTag, index: mediaStart, style: data.style || '', prompt: data.prompt || '', aspectRatio: data.aspect_ratio || data.aspectRatio || null, preset: data.preset || null, imageSize: data.image_size || data.imageSize || null, quality: data.quality || null, isNewFormat: true, mediaTagName: tagName, existingSrc: hasPath ? srcValue : null });
+            // NovelAI comics blocks write { base, characters, bubbles } instead of { prompt };
+            // the whole object travels along as `instruction` for the NovelAI route.
+            tags.push({ fullMatch: fullImgTag, index: mediaStart, style: data.style || '', prompt: data.prompt || data.base || '', instruction: data, aspectRatio: data.aspect_ratio || data.aspectRatio || null, preset: data.preset || null, imageSize: data.image_size || data.imageSize || null, quality: data.quality || null, isNewFormat: true, mediaTagName: tagName, existingSrc: hasPath ? srcValue : null });
             iigLog('INFO', `Found NEW tag: ${data.prompt?.substring(0, 50)}`);
         } catch (e) { iigLog('WARN', `Parse failed: ${instructionJson.substring(0, 100)}`); }
         searchPos = mediaEnd;
@@ -6086,9 +6151,9 @@ async function retryFailedGeneration(errorEl, instructionJsonStr) {
     const timerEl = loading.querySelector('.iig-status-timer');
 
     try {
-        const result = await generateImageWithRetry(data.prompt, data.style,
+        const result = await generateImageWithRetry(data.prompt || data.base || '', data.style,
             (s) => { if (labelEl?.isConnected) labelEl.textContent = s; },
-            { aspectRatio: data.aspect_ratio, imageSize: data.image_size, quality: data.quality, preset: data.preset, messageId });
+            { aspectRatio: data.aspect_ratio, imageSize: data.image_size, quality: data.quality, preset: data.preset, messageId, instruction: data });
         if (labelEl?.isConnected) labelEl.textContent = 'Сохранение...';
         if (timerEl?.isConnected) timerEl.textContent = '';
         const imagePath = isGeneratedVideoResult(result)
@@ -6221,7 +6286,7 @@ async function processMessageTags(messageId) {
         const labelEl = loadingPlaceholder.querySelector('.iig-status-label') || statusEl;
         const timerEl = loadingPlaceholder.querySelector('.iig-status-timer');
         try {
-            const result = await generateImageWithRetry(tag.prompt, tag.style, (s) => { labelEl.textContent = s; }, { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId });
+            const result = await generateImageWithRetry(tag.prompt, tag.style, (s) => { labelEl.textContent = s; }, { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId, instruction: tag.instruction });
 
             labelEl.textContent = 'Сохранение...';
             if (timerEl) timerEl.textContent = '';
@@ -6337,7 +6402,7 @@ async function regenerateMessageImages(messageId) {
                 const statusEl = loadingPlaceholder.querySelector('.iig-status');
                 const labelEl = loadingPlaceholder.querySelector('.iig-status-label') || statusEl;
                 const timerEl = loadingPlaceholder.querySelector('.iig-status-timer');
-                const result = await generateImageWithRetry(tag.prompt, tag.style, (s) => { labelEl.textContent = s; }, { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId });
+                const result = await generateImageWithRetry(tag.prompt, tag.style, (s) => { labelEl.textContent = s; }, { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality, preset: tag.preset, messageId, instruction: tag.instruction });
                 labelEl.textContent = 'Сохранение...';
                 if (timerEl) timerEl.textContent = '';
 

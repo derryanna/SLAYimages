@@ -241,14 +241,30 @@ This fork ([derryanna/SLAYimages](https://github.com/derryanna/SLAYimages)) trac
 - **gpt-image / dall-e via the direct images API** — in OpenAI-compatible mode, a model name containing `gpt-image` or `dall-e` is sent to `/v1/images/generations` instead of `chat/completions`. When reference images are attached, they go through `/v1/images/edits` as multipart `image[]`.
 - **NovelAI through the SillyTavern token** — new API type «NovelAI (токен из ST)». Generation goes through SillyTavern's own `/api/novelai/generate-image`, so the token you already entered under **API Connections → NovelAI** is reused and no endpoint or key is stored in the extension. Model, aspect ratio and negative prompt have their own rows; reference images are not sent (the ST endpoint does not accept them), outfit text descriptions still are.
 - **NovelAI vibes and quality tags (optional server plugin)** — SillyTavern's endpoint always sends empty reference arrays, so Vibe Transfer needs the small server plugin in `server-plugin/nai-vibe`. With it installed, the NovelAI section gets a «Вайбы» list: upload `.naiv4vibe` files (pre-encoded vibes, no Anlas spent on encoding), tick the ones to use and set their strength. A «Теги качества» checkbox appends `very aesthetic, masterpiece` (and `no text` when the prompt asks for no lettering), like the NovelAI site does. The token still comes from **API Connections → NovelAI** on the server; without the plugin everything falls back to the plain ST endpoint.
+- **NovelAI V4.5 character prompts, comic pages and Russian speech bubbles** (`nai-comics.js`, plugin `request.mjs`) — the image instruction may be structured instead of a single prompt:
+
+  ```json
+  {"base": "1boy, 1girl, comic, 4 panels, one large panel on top, three small close-up panels at the bottom, speech bubble, blank speech bubble, upper body, bedroom, dim lighting",
+   "characters": [
+     {"name": "Kakashi", "prompt": "boy, adult, messy hair, silver hair, grey eyes, scar on face, …", "uc": "mask, headband, glasses", "center": {"x": 0.3, "y": 0.3}},
+     {"name": "Aurora",  "prompt": "girl, adult, very long hair, wavy hair, blonde hair, green eyes, …", "uc": "huge breasts, hourglass", "center": {"x": 0.7, "y": 0.3}}],
+   "bubbles": [{"speaker": "Kakashi", "text": "Ты отсюда никуда не уйдешь..."}],
+   "aspect_ratio": "2:3", "image_size": "1K"}
+  ```
+
+  Each character becomes its own V4 character field (`char_captions` + per-character negative, `use_coords` when centers are given), so features stop bleeding between people. `aspect_ratio` from the instruction is used when the NovelAI aspect setting is «auto». The SLAY style is sent as tags only (everything after `Avoid:` is dropped — NovelAI reads it as content). The negative loses `multiple views` / `split screen` for comic pages. NovelAI cannot draw Cyrillic, so bubbles are generated blank and SLAY typesets the Russian lines itself on a canvas before saving: it finds the white outlined bubbles, whitens any lettering NovelAI left inside, fits the text (auto-wrap, auto-size), and draws its own bubble at the top of the picture when no suitable bubble exists. A plain `{"prompt": "…"}` instruction keeps working; the old «`base | boy Name … | girl Name …`» prompts are split into character fields too. A ready block prompt for ExtBlocks lives in the handoff (`naicom_v2`).
 
 ### NovelAI vibe plugin
 
-1. Copy `server-plugin/nai-vibe` into SillyTavern's `plugins/` folder
+1. Copy `server-plugin/nai-vibe` (both `index.mjs` and `request.mjs`) into SillyTavern's `plugins/` folder
 2. Set `enableServerPlugins: true` in `config.yaml`
 3. Restart SillyTavern
 
 Vibe files are stored per user in `data/<user>/nai-vibes/`. A vibe only works with the model it was encoded for (shown next to its name).
+
+### Tests
+
+`npm test` (node ≥ 20, no network): request building for the plugin, instruction parsing, bubble detection and layout.
 
 ### Install
 
