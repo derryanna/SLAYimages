@@ -264,11 +264,34 @@ Vibe files are stored per user in `data/<user>/nai-vibes/`. A vibe only works wi
 
 ### Per-image model switch
 
-The prompt block may add `"model": "4.5"` or `"model": "v5"` (also accepted: `"look": "hot" | "clean"`) to the `data-iig-instruction` JSON. SLAY then picks `nai-diffusion-4-5-full` or `nai-diffusion-5-full` for that one image; without the field the model from the settings is used. On V5 the vibes are always off (V5 rejects 4.5 vibe encodings) and the phrase `soft painterly shading, moody low key light, faces close and large in frame` is appended to the base. On 4.5 the vibes ticked in the UI are used; with nothing ticked the house set goes in automatically: `violet` 0.6 + `red` 0.2, or `violet` 0.6 + `dan` 0.35 when the base starts with `nsfw`. The house vibes are looked up by file name in `data/<user>/nai-vibes/` and silently skipped when a file is missing (a warning lands in the SLAY log).
+The prompt block may add `"model": "4.5"` or `"model": "v5"` (also accepted: `"look": "hot" | "clean"`) to the `data-iig-instruction` JSON. SLAY then picks `nai-diffusion-4-5-full` or `nai-diffusion-5-full` for that one image; without the field the model from the settings is used. On V5 the vibes are always off (V5 rejects 4.5 vibe encodings) and the phrase `soft painterly shading, moody low key light, faces close and large in frame` is appended to the base. On 4.5 the vibes ticked in the UI are used; with nothing ticked the house vibe goes in automatically (`aur10` 0.6). The house vibe is looked up by file name in `data/<user>/nai-vibes/` and silently skipped when the file is missing (a warning lands in the SLAY log).
+
+### NovelAI knobs
+
+The «Параметры генерации» section has the NovelAI controls (tables and validation in `nai-library.js`):
+
+- **Размер** — «Из промпта» (default: the free size closest to the block's `aspect_ratio`), the three free «Normal» sizes, three larger presets, or «Своё» W×H (multiples of 64, up to 3 MP). A badge under the row says whether the request is **free on Opus** (≤ 1 MP and ≤ 28 steps) or costs **Anlas**, and why.
+- **Тонкие настройки NovelAI** (collapsed by default) — steps (1–50), CFG (0–10), CFG rescale (0–1), sampler, noise schedule and *skip CFG above sigma* (both hidden on V5, which has neither), seed (−1 = random, dice button resets it), and the **«Разрешить Anlas»** checkbox. Without it the request is shrunk to the free tier before sending; the server plugin applies the same clamp unless the body carries `allow_anlas: true`, so an old extension can never spend Anlas by accident.
+- All of these travel with a connection profile.
+
+CFG rescale, skip-cfg and seed only reach NovelAI through the `nai-vibe` plugin; the plain ST endpoint ignores them (the panel says so when the plugin is missing).
+
+### Style and negative library (NovelAI)
+
+For the NovelAI API type the «Стиль» row of the prose catalogue is replaced by **Стиль** and **Негатив** rows with a «Библиотека» button. The library (`nai-library.js`, stored in the extension settings as `naiStyles` / `naiNegatives`) is seeded on first run with the house looks — «Эйден (домашний 4.5)» active for 4.5, «Домашний V5» active for V5, «Домашний негатив» active — plus the three other styles found on the NovelAI site (f1 / f3 / f4) inactive. A non-empty negative from the old single-line field is moved into an entry called «Своё» and activated.
+
+- Every style belongs to a model (`4.5`, `V5` or «любая»); one style is active **per model**, so a block that switches `"model": "4.5"` / `"v5"` per image gets the right style automatically. Entries are sent verbatim as tags (weights like `1.3::tag::` and groups `1.5::a, b::` are kept whole; nothing is deduplicated inside them; quality tags already present are not repeated by the plugin).
+- The modal: «Стили / Негативы» tabs, search by name and text, click a row to activate it, «Без стиля / Без негатива» rows for an explicit empty value, pencil → inline editor (name, model, tags; autosaved), duplicate, delete, JSON export / import (the SLAY export format or a plain `{"name": "tags"}` map).
+- When the library is empty or the active entry is missing, the house constants are used, so wiped settings never produce bare prompts.
+- The settings file is written whole from the open tab — edit the library in one tab at a time.
+
+### Panel sections
+
+Every section header of the SLAY panel (API, Параметры генерации, Референсы, Гардероб, Контекст изображений, Видео, Повторы, Отладка and the NovelAI fine-tuning group) is a toggle with a chevron; tapping anywhere on the header collapses or expands it. The state is remembered per browser in `localStorage` (`slay_sections_v1`, not in the settings file, so two open tabs cannot race), and only «API» is open by default.
 
 ### Tests
 
-`npm test` (node ≥ 20, no network): request building for the plugin, instruction parsing, bubble detection and layout.
+`npm test` (node ≥ 20, no network): request building for the plugin, instruction parsing, bubble detection and layout, the NovelAI knobs and the style / negative library (`test/nai-library.test.mjs`).
 
 ### Install
 

@@ -2794,8 +2794,22 @@ const defaultSettings = Object.freeze({
     naisteraModel: 'grok',
     // NovelAI через сервер ST (/api/novelai/generate-image) — токен хранится в ST
     novelaiModel: 'nai-diffusion-5-full',
+    // Size preset: 'auto' (free size from the block's ratio) | '2:3' | '3:2' | '1:1' | 'WxH' | 'custom' (see nai-library.js)
     novelaiAspectRatio: 'auto',
+    novelaiWidth: 832,
+    novelaiHeight: 1216,
+    novelaiSteps: 28,
+    novelaiCfgScale: 5,
+    novelaiCfgRescale: 0,
+    novelaiSampler: 'k_euler_ancestral',
+    novelaiNoiseSchedule: 'karras',
+    novelaiSkipCfgAboveSigma: 0,
+    novelaiSeed: -1,
+    novelaiAllowAnlas: false,
+    // Retired single-line negative; a non-empty value migrates into the library («Своё») on first run.
     novelaiNegativePrompt: '',
+    // Style / negative library (nai-library.js seeds these on first run): naiStyles, naiNegatives,
+    // naiActiveStyle { '4.5': id, v5: id }, naiActiveNegative id.
     // Плагин сервера nai-vibe: теги качества как на сайте NAI и вайбы (.naiv4vibe) — [{ name, strength, enabled }]
     novelaiQuality: true,
     novelaiVibes: [],
@@ -4442,20 +4456,31 @@ async function generateImageNaistera(prompt, style, options = {}) {
 // NovelAI с токеном, сохранённым в ST (API Connections → NovelAI), распаковывает
 // zip и возвращает голый base64 PNG. Нет CORS, ключ в расширении не хранится.
 // Эндпоинт жёстко шлёт reference_image_multiple: [] — рефы передать нельзя.
-// Домашний вид (раунд 2 nai-style): префикс + негатив, которые дали «фаворит» на обеих моделях.
-const NAI_DEFAULT_STYLE = 'muted colors, dim lighting, low key, detailed skin, glossy skin';
-// 4.5 house style (Anna's pick 8 Oct 2026, «Эйден» artist mix from the NovelAI site; pairs with the aur10 vibe).
-const NAI_DEFAULT_STYLE_45 = '0.8::lart_art1 ::, 1.6::zero_q_0q::, 0.7::etceteraart::, 1.3::dang0_23 ::, 0.9::lesly_oh::, 0.5::sasha_khmel::, -2::multiple images::, intricate details, perfect anatomy, realistic, highres_quality, ultra_detail, sidelighting, volumetric_shadow, chiaroscuro, photorealistic_background, depth_of_field, masterpiece, best quality, very aesthetic, absurdres, highly detailed, sharp focus';
-const NAI_DEFAULT_NEGATIVE = 'lowres, artistic error, worst quality, bad quality, jpeg artifacts, very displeasing, watermark, logo, signature, text, speech bubble, chibi, bad anatomy, bad hands, extra digits, fewer digits, animal ears, tattoo, flat color, flat shading, plastic skin, airbrushed';
+// Домашний вид (стили, негатив), ручки и их таблицы живут в nai-library.js (сид + fallback).
 
-function mapRatioToNovelAISize(aspectRatio) {
-    // Размеры из "Normal" пресетов NAI — на Opus такие генерации бесплатны
-    const m = String(aspectRatio || '1:1').match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
-    if (!m) return [1024, 1024];
-    const w = parseFloat(m[1]), h = parseFloat(m[2]);
-    if (w > h) return [1216, 832];
-    if (h > w) return [832, 1216];
-    return [1024, 1024];
+// Settings keys that a connection profile carries for NovelAI (mirrors NAI_PROFILE_KEYS in nai-library.js;
+// kept inline so profiles work even when the module is missing).
+const NAI_PROFILE_KEYS = ['novelaiModel', 'novelaiAspectRatio', 'novelaiWidth', 'novelaiHeight', 'novelaiSteps', 'novelaiCfgScale',
+    'novelaiCfgRescale', 'novelaiSampler', 'novelaiNoiseSchedule', 'novelaiSkipCfgAboveSigma', 'novelaiSeed', 'novelaiAllowAnlas',
+    'naiActiveStyle', 'naiActiveNegative'];
+
+// Option lists for the panel (the module is lazy; the panel HTML is built synchronously).
+const NAI_SIZE_OPTIONS = [
+    { v: 'auto', l: 'Из промпта (бесплатный размер)' }, { v: '2:3', l: '832×1216 портрет' }, { v: '3:2', l: '1216×832 альбом' }, { v: '1:1', l: '1024×1024 квадрат' },
+    { v: '1024x1536', l: '1024×1536 портрет (Anlas)' }, { v: '1536x1024', l: '1536×1024 альбом (Anlas)' }, { v: '1536x1536', l: '1536×1536 квадрат (Anlas)' }, { v: 'custom', l: 'Своё (шаг 64)' },
+];
+const NAI_SAMPLER_OPTIONS = [
+    { v: 'k_euler_ancestral', l: 'Euler Ancestral' }, { v: 'k_euler', l: 'Euler' }, { v: 'k_dpmpp_2m', l: 'DPM++ 2M' },
+    { v: 'k_dpmpp_2m_sde', l: 'DPM++ 2M SDE' }, { v: 'k_dpmpp_2s_ancestral', l: 'DPM++ 2S Ancestral' }, { v: 'k_dpmpp_sde', l: 'DPM++ SDE' },
+];
+
+// nai-library.js: knobs, free-tier check, style / negative library. Lazy like nai-comics.js.
+let naiLibraryModule = null;
+async function loadNaiLibrary() {
+    if (!naiLibraryModule) {
+        naiLibraryModule = import(new URL('./nai-library.js', import.meta.url).href).catch(e => { naiLibraryModule = null; throw e; });
+    }
+    return naiLibraryModule;
 }
 
 // ── Плагин сервера nai-vibe (server-plugin/nai-vibe в этом репо) ──
@@ -4525,6 +4550,257 @@ async function renderNovelaiVibes() {
     }));
 }
 
+// ── NovelAI knobs panel: V5 hides schedule / skip-cfg, custom size row, free-tier badge, active style / negative names ──
+async function updateNaiKnobsUI() {
+    const settings = getSettings();
+    const v5 = /^nai-diffusion-5/.test(settings.novelaiModel || '');
+    document.getElementById('slay_novelai_schedule_row')?.classList.toggle('iig-hidden', v5);
+    document.getElementById('slay_novelai_skipcfg_row')?.classList.toggle('iig-hidden', v5);
+    document.getElementById('slay_novelai_custom_size_row')?.classList.toggle('iig-hidden', settings.novelaiAspectRatio !== 'custom');
+    let nl;
+    try { nl = await loadNaiLibrary(); } catch (e) {
+        const cost = document.getElementById('slay_novelai_cost');
+        if (cost) cost.textContent = `nai-library.js не загрузился: ${e.message}`;
+        return;
+    }
+    if (nl.ensureNaiLibrary(settings)) saveSettings();
+    const params = nl.normalizeNaiParams(settings);
+    const auto = (settings.novelaiAspectRatio || 'auto') === 'auto';
+    const [w, h] = nl.resolveNaiSize(settings, null, '2:3');
+    const cost = nl.naiCost({ width: w, height: h, steps: params.steps });
+    const costEl = document.getElementById('slay_novelai_cost');
+    if (costEl) {
+        const size = auto ? 'размер из промпта (до 1 МП)' : `${w}×${h}`;
+        if (cost.free) {
+            costEl.innerHTML = `<i class="fa-solid fa-circle-check"></i> Бесплатно на Opus: ${size}, ${params.steps} шагов`;
+            costEl.style.color = '';
+        } else {
+            costEl.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Anlas: ${cost.reasons.join(', ')} (${size}, ${params.steps} шагов)${params.allowAnlas ? '' : ' — без галочки «Разрешить Anlas» запрос ужмётся до бесплатного'}`;
+            costEl.style.color = '#ff9800';
+        }
+    }
+    const styleEl = document.getElementById('slay_novelai_style_name');
+    if (styleEl) {
+        const key = nl.naiModelKey(settings.novelaiModel);
+        const e = nl.activeNaiStyle(settings, settings.novelaiModel);
+        styleEl.textContent = e ? e.name : (settings.naiActiveStyle?.[key] === '' ? 'Без стиля' : 'Домашний (константа)');
+        styleEl.title = e ? e.value : '';
+    }
+    const negEl = document.getElementById('slay_novelai_negative_name');
+    if (negEl) {
+        const e = nl.activeNaiNegativeEntry(settings);
+        negEl.textContent = e ? e.name : (settings.naiActiveNegative === '' ? 'Без негатива' : 'Домашний (константа)');
+        negEl.title = e ? e.value : '';
+    }
+    const hint = document.getElementById('slay_novelai_plugin_hint');
+    if (hint) hint.classList.toggle('iig-hidden', (await novelaiPluginAvailable()) === true);
+}
+
+// Push the settings into the knob inputs (after a connection profile is applied).
+function syncNaiKnobInputs() {
+    const settings = getSettings();
+    const map = {
+        slay_novelai_width: 'novelaiWidth', slay_novelai_height: 'novelaiHeight', slay_novelai_steps: 'novelaiSteps',
+        slay_novelai_cfg: 'novelaiCfgScale', slay_novelai_cfg_rescale: 'novelaiCfgRescale', slay_novelai_skip_cfg: 'novelaiSkipCfgAboveSigma',
+        slay_novelai_seed: 'novelaiSeed', slay_novelai_sampler: 'novelaiSampler', slay_novelai_schedule: 'novelaiNoiseSchedule',
+    };
+    for (const [id, key] of Object.entries(map)) {
+        const el = document.getElementById(id);
+        if (el && settings[key] !== undefined) el.value = String(settings[key]);
+    }
+    const anlas = document.getElementById('slay_novelai_allow_anlas');
+    if (anlas) anlas.checked = !!settings.novelaiAllowAnlas;
+}
+
+// ── Library modal: styles / negatives, search, activate in one click, inline editor, duplicate / delete, JSON import / export ──
+async function openNaiLibraryModal(initialKind = 'styles') {
+    const settings = getSettings();
+    let nl;
+    try { nl = await loadNaiLibrary(); } catch (e) { toastr.error(`nai-library.js не загрузился: ${e.message}`, 'SLAY Images'); return; }
+    if (nl.ensureNaiLibrary(settings)) saveSettings();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'slay-style-overlay';
+    overlay.innerHTML = `
+      <div class="slay-style-modal iig-nai-lib">
+        <div class="slay-style-modal-head">
+          <span class="slay-style-modal-title"><i class="fa-solid fa-book"></i> Библиотека NovelAI</span>
+          <label class="slay-style-refresh" title="Импорт JSON (экспорт SLAY или файл «имя»: «теги»)"><i class="fa-solid fa-file-import"></i><input type="file" accept=".json,application/json" hidden></label>
+          <div class="slay-style-refresh iig-nai-export" title="Экспорт библиотеки в JSON"><i class="fa-solid fa-file-export"></i></div>
+          <div class="slay-style-modal-close menu_button"><i class="fa-solid fa-xmark"></i></div>
+        </div>
+        <div class="slay-style-filters iig-nai-filters">
+          <button type="button" class="slay-style-chip" data-tab="styles">Стили</button>
+          <button type="button" class="slay-style-chip" data-tab="negatives">Негативы</button>
+          <input type="search" class="text_pole iig-nai-search" placeholder="Поиск по имени и тегам">
+          <div class="menu_button iig-nai-add" title="Новая запись"><i class="fa-solid fa-plus"></i> Добавить</div>
+        </div>
+        <div class="slay-style-body"><div class="iig-nai-list"></div></div>
+        <p class="hint iig-nai-foot"></p>
+      </div>`;
+    document.body.appendChild(overlay);
+    const modal = overlay.querySelector('.slay-style-modal');
+    const close = (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } overlay.remove(); updateNaiKnobsUI(); };
+    overlay.querySelector('.slay-style-modal-close').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(e); });
+    overlay.addEventListener('mousedown', e => { if (e.target === overlay) { e.preventDefault(); e.stopPropagation(); } });
+    // Same boundary as the style picker: ST's drawer closes on outside touch / pointer events.
+    for (const ev of ['click', 'mousedown', 'pointerdown', 'pointerup']) modal.addEventListener(ev, e => e.stopPropagation());
+    for (const ev of ['touchstart', 'touchend']) modal.addEventListener(ev, e => e.stopPropagation(), { passive: true });
+
+    let kind = initialKind === 'negatives' ? 'negatives' : 'styles';
+    let query = '';
+    let editing = null; // id with the inline editor open
+    const listEl = overlay.querySelector('.iig-nai-list');
+    const footEl = overlay.querySelector('.iig-nai-foot');
+    const esc = sanitizeForHtml;
+    let saveTimer = null;
+    const persist = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => { saveSettings(); updateNaiKnobsUI(); }, 300); };
+
+    const activeSlots = (e) => {
+        if (kind === 'negatives') return settings.naiActiveNegative === e.id ? ['✓'] : [];
+        return ['4.5', 'v5'].filter(k => settings.naiActiveStyle?.[k] === e.id).map(k => k === 'v5' ? 'V5' : '4.5');
+    };
+    const activate = (id) => {
+        if (kind === 'negatives') nl.setActiveNaiNegative(settings, id);
+        else nl.setActiveNaiStyle(settings, id, settings.novelaiModel);
+        persist(); render();
+    };
+
+    const render = () => {
+        overlay.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === kind));
+        const all = nl.naiEntries(settings, kind);
+        const list = nl.filterNaiEntries(all, query);
+        const curKey = nl.naiModelKey(settings.novelaiModel);
+        const noneOn = kind === 'negatives' ? settings.naiActiveNegative === '' : settings.naiActiveStyle?.[curKey] === '';
+        const rows = [];
+        rows.push(`<div class="iig-nai-row iig-nai-none ${noneOn ? 'is-active' : ''}" data-none="1">
+            <div class="iig-nai-row-main"><i class="fa-solid ${noneOn ? 'fa-circle-check' : 'fa-circle'} iig-nai-check"></i>
+            <div class="iig-nai-row-text"><div class="iig-nai-row-name">${kind === 'negatives' ? 'Без негатива' : `Без стиля <span class="iig-nai-badge">${curKey === 'v5' ? 'V5' : '4.5'}</span>`}</div>
+            <div class="iig-nai-row-preview">${kind === 'negatives' ? 'пустой негатив' : 'в промпт идёт только сцена из блока'}</div></div></div></div>`);
+        for (const e of list) {
+            const slots = activeSlots(e);
+            const on = slots.length > 0;
+            const modelBadge = kind === 'styles' ? `<span class="iig-nai-badge ${e.model === 'any' ? 'is-any' : ''}" title="для какой модели">${e.model === 'any' ? 'любая' : (e.model === 'v5' ? 'V5' : '4.5')}</span>` : '';
+            const activeBadge = on ? `<span class="iig-nai-badge is-on">активен${kind === 'styles' ? ': ' + slots.join(' + ') : ''}</span>` : '';
+            const isEdit = editing === e.id;
+            rows.push(`<div class="iig-nai-row ${on ? 'is-active' : ''}" data-id="${esc(e.id)}">
+                <div class="iig-nai-row-main" title="Нажмите, чтобы сделать активным">
+                    <i class="fa-solid ${on ? 'fa-circle-check' : 'fa-circle'} iig-nai-check"></i>
+                    <div class="iig-nai-row-text">
+                        <div class="iig-nai-row-name">${esc(e.name || '(без имени)')} ${modelBadge} ${activeBadge}</div>
+                        <div class="iig-nai-row-preview">${esc(e.value.slice(0, 160))}${e.value.length > 160 ? '…' : ''}</div>
+                    </div>
+                </div>
+                <div class="iig-nai-row-acts">
+                    <div class="menu_button ${isEdit ? 'is-on' : ''}" data-act="edit" title="Редактировать"><i class="fa-solid fa-pen"></i></div>
+                    <div class="menu_button" data-act="dup" title="Дубликат"><i class="fa-solid fa-clone"></i></div>
+                    <div class="menu_button" data-act="del" title="Удалить"><i class="fa-solid fa-trash-can"></i></div>
+                </div>
+                <div class="iig-nai-editor ${isEdit ? '' : 'iig-hidden'}">
+                    <div class="flex-row"><label>Имя</label><input type="text" class="text_pole flex1" data-f="name" value="${esc(e.name)}"></div>
+                    ${kind === 'styles' ? `<div class="flex-row"><label>Модель</label><select class="flex1" data-f="model">${['4.5', 'v5', 'any'].map(m => `<option value="${m}" ${e.model === m ? 'selected' : ''}>${m === 'any' ? 'любая' : (m === 'v5' ? 'NAI V5' : 'NAI 4.5')}</option>`).join('')}</select></div>` : ''}
+                    <textarea class="text_pole iig-nai-textarea" data-f="value" rows="5" placeholder="теги через запятую; веса как на сайте: 1.3::tag::">${esc(e.value)}</textarea>
+                </div>
+            </div>`);
+        }
+        listEl.innerHTML = rows.join('') || '<div class="slay-style-loading">Пусто</div>';
+        footEl.innerHTML = `${all.length} ${kind === 'negatives' ? 'негативов' : 'стилей'}${query ? `, найдено ${list.length}` : ''} · стиль активируется для своей модели (запись «любая» — для модели из настроек: ${curKey === 'v5' ? 'V5' : '4.5'}) · правьте библиотеку в одной вкладке: вторая вкладка затрёт изменения`;
+    };
+
+    listEl.addEventListener('click', async (e) => {
+        const row = e.target.closest('.iig-nai-row');
+        if (!row) return;
+        if (row.dataset.none) { activate(''); return; }
+        const id = row.dataset.id;
+        const act = e.target.closest('[data-act]')?.dataset.act;
+        if (!act) {
+            if (e.target.closest('.iig-nai-editor')) return;
+            activate(id);
+            return;
+        }
+        if (act === 'edit') { editing = editing === id ? null : id; render(); if (editing) row.querySelector('[data-f="name"]')?.focus?.(); return; }
+        if (act === 'dup') { const c = nl.duplicateNaiEntry(settings, kind, id); editing = c?.id || null; persist(); render(); return; }
+        if (act === 'del') {
+            const entry = nl.findNaiEntry(settings, kind, id);
+            if (!(await slayConfirm(`Удалить «${entry?.name || id}»?`))) return;
+            nl.removeNaiEntry(settings, kind, id);
+            if (editing === id) editing = null;
+            persist(); render();
+        }
+    });
+    // Inline editor autosave: the row text follows without a re-render, so the caret stays put.
+    listEl.addEventListener('input', (e) => {
+        const f = e.target.dataset.f;
+        const row = e.target.closest('.iig-nai-row');
+        if (!f || !row?.dataset.id) return;
+        const entry = nl.updateNaiEntry(settings, kind, row.dataset.id, { [f]: e.target.value });
+        if (!entry) return;
+        if (f === 'name') { const n = row.querySelector('.iig-nai-row-name'); if (n) n.firstChild.textContent = (entry.name || '(без имени)') + ' '; }
+        if (f === 'value') { const p = row.querySelector('.iig-nai-row-preview'); if (p) p.textContent = entry.value.slice(0, 160) + (entry.value.length > 160 ? '…' : ''); }
+        persist();
+    });
+    listEl.addEventListener('change', (e) => {
+        if (e.target.dataset.f === 'model') { persist(); render(); }
+    });
+    overlay.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => { kind = b.dataset.tab; editing = null; render(); }));
+    overlay.querySelector('.iig-nai-search').addEventListener('input', (e) => { query = e.target.value; render(); });
+    overlay.querySelector('.iig-nai-add').addEventListener('click', () => {
+        const entry = nl.addNaiEntry(settings, kind, kind === 'styles' ? { model: nl.naiModelKey(settings.novelaiModel) } : {});
+        editing = entry.id; query = ''; overlay.querySelector('.iig-nai-search').value = '';
+        persist(); render();
+        listEl.querySelector(`[data-id="${CSS.escape(entry.id)}"] [data-f="name"]`)?.focus();
+    });
+    overlay.querySelector('.iig-nai-export').addEventListener('click', () => {
+        const blob = new Blob([JSON.stringify(nl.exportNaiLibrary(settings), null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob); a.download = 'slay-nai-library.json';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
+    overlay.querySelector('input[type="file"]').addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+        try {
+            const r = nl.importNaiLibrary(settings, await file.text(), { model: nl.naiModelKey(settings.novelaiModel) });
+            toastr.success(`Импортировано: стилей ${r.styles}, негативов ${r.negatives}`, 'SLAY Images', { timeOut: 3000 });
+            persist(); render();
+        } catch (err) {
+            toastr.error(`Импорт не удался: ${err.message}`, 'SLAY Images');
+        }
+    });
+    render();
+}
+
+// ── Collapsible panel sections: every [data-sec] header toggles its parent; state lives in localStorage
+// (not in the settings — two open tabs would race). Only «API» is open by default. ──
+const SECTIONS_LS_KEY = 'slay_sections_v1';
+function initCollapsibleSections(root) {
+    if (!root) return;
+    let state = {};
+    try { state = JSON.parse(localStorage.getItem(SECTIONS_LS_KEY) || '{}') || {}; } catch (_) { state = {}; }
+    for (const head of root.querySelectorAll('[data-sec]')) {
+        const key = head.dataset.sec;
+        const box = head.parentElement;
+        if (!box || head.dataset.secBound) continue;
+        head.dataset.secBound = '1';
+        if (!head.querySelector('.iig-sec-chev')) head.insertAdjacentHTML('beforeend', '<i class="fa-solid fa-chevron-down iig-sec-chev"></i>');
+        const open = Object.hasOwn(state, key) ? !!state[key] : key === 'api';
+        box.classList.toggle('iig-collapsed', !open);
+        head.setAttribute('role', 'button');
+        head.setAttribute('aria-expanded', String(open));
+        head.addEventListener('click', (e) => {
+            // Buttons inside the header (e.g. «Сохранённые» in the refs header) keep their own job.
+            if (e.target.closest('button, .menu_button, a, input, select, textarea, label')) return;
+            const collapsed = box.classList.toggle('iig-collapsed');
+            head.setAttribute('aria-expanded', String(!collapsed));
+            state[key] = !collapsed;
+            try { localStorage.setItem(SECTIONS_LS_KEY, JSON.stringify(state)); } catch (_) { }
+        });
+    }
+}
+
 // nai-comics.js: structured V4.5 instructions, tag-only style, bubble typesetting.
 // Loaded lazily so a missing file only breaks the NovelAI route, not the extension.
 let naiComicsModule = null;
@@ -4584,12 +4860,17 @@ async function generateImageNovelAI(prompt, style, options = {}) {
     const nc = await loadNaiComics();
     // Structured { base, characters, bubbles } from the block, or the plain prompt (old "|" sections still split).
     const instr = nc.parseNaiInstruction(options.instruction || { prompt });
-    const ratioSetting = settings.novelaiAspectRatio || 'auto';
-    const aspectRatio = ratioSetting === 'auto' ? (instr.aspectRatio || options.aspectRatio || '1:1') : ratioSetting;
-    const [width, height] = mapRatioToNovelAISize(aspectRatio);
-    // NovelAI reads tags, not "[STYLE: … Avoid: …]" prose: keep only the tag part of the style.
-    // Empty fields fall back to the house look: a blank negative made NovelAI images visibly cheaper.
-    const negative = (settings.novelaiNegativePrompt || '').trim() || NAI_DEFAULT_NEGATIVE;
+    const nl = await loadNaiLibrary();
+    nl.ensureNaiLibrary(settings);
+    const params = nl.normalizeNaiParams(settings);
+    // Size: preset from the panel; 'auto' = the free size closest to the block's ratio.
+    const [w0, h0] = nl.resolveNaiSize(settings, instr.aspectRatio, options.aspectRatio || '1:1');
+    // Free-tier guard in the UI (the plugin clamps too unless allow_anlas is sent).
+    const tier = nl.enforceFreeTier(w0, h0, params.steps, params.allowAnlas);
+    const { width, height } = tier;
+    if (tier.clamped) iigLog('WARN', `NovelAI: ${w0}x${h0} / ${params.steps} шагов ужато до бесплатного лимита (${width}x${height} / ${tier.steps}); поставьте «Разрешить Anlas», чтобы снять ограничение`);
+    // Negative: the active library entry (the house negative by default — a blank negative made images visibly cheaper).
+    const negative = nl.activeNaiNegativeText(settings);
     // Плагин nai-vibe умеет вайбы, теги качества и персонажные поля V4; без него — родной эндпоинт ST
     const viaPlugin = await novelaiPluginAvailable();
     // Модель на каждую картинку: блок пишет "model": "4.5" | "v5" — иначе настройка UI.
@@ -4601,23 +4882,27 @@ async function generateImageNovelAI(prompt, style, options = {}) {
         serverVibes: viaPlugin ? naiServerVibeNames : null,
     });
     const model = look.model;
-    const styleTags = nc.naiStyleTags(style) || (look.v5 ? NAI_DEFAULT_STYLE : NAI_DEFAULT_STYLE_45);
+    // Style: the library entry active for THIS image's model, sent verbatim (library entries are tags already).
+    // The prose catalogue («[STYLE: … Avoid: …]») stays for the other APIs.
+    const styleEntry = nl.activeNaiStyle(settings, model);
+    const styleTags = nl.activeNaiStyleTags(settings, model);
     if (!viaPlugin && look.vibes.length) toastr.warning('Серверный плагин nai-vibe не установлен — вайбы пропущены', 'SLAY Images', { timeOut: 4000 });
     if (viaPlugin && look.missing.length && naiMissingVibesWarned !== look.missing.join(',')) {
         naiMissingVibesWarned = look.missing.join(',');
         iigLog('WARN', `NovelAI: house vibes missing on the server: ${look.missing.join(', ')} (upload them as .naiv4vibe with these names)`);
     }
-    // steps=28 и размеры выше — потолок бесплатных генераций на Opus
     const body = nc.buildNaiPluginBody(instr, {
         styleTags, styleSuffix: look.styleSuffix, negative, model, width, height,
-        quality: settings.novelaiQuality !== false, vibes: viaPlugin ? look.vibes : [], steps: 28, scale: 5,
+        quality: settings.novelaiQuality !== false, vibes: viaPlugin ? look.vibes : [],
+        steps: tier.steps, scale: params.scale, sampler: params.sampler, scheduler: params.scheduler,
+        cfgRescale: params.cfg_rescale, seed: params.seed, skipCfgAboveSigma: params.skip_cfg_above_sigma, allowAnlas: params.allowAnlas,
     });
     if (!viaPlugin && body.characters.length) {
         // ST's endpoint has no character slots: fold them into the base prompt so nothing is lost.
         body.prompt = [body.prompt, ...body.characters.map(c => c.prompt)].join(', ');
         toastr.warning('Серверный плагин nai-vibe не установлен — персонажи NovelAI V4 склеены в один промпт', 'SLAY Images', { timeOut: 5000 });
     }
-    iigLog('INFO', `NovelAI (${viaPlugin ? 'nai-vibe' : 'ST'}): model=${model}${look.fromBlock ? ' (from block)' : ''}, ${width}x${height} (${aspectRatio}), chars=${body.characters.length}, coords=${body.characters.some(c => c.center)}, bubbles=${instr.bubbles.length}, vibes=${body.vibes.map(v => `${v.name}:${v.strength}`).join(' ') || 'none'}`);
+    iigLog('INFO', `NovelAI (${viaPlugin ? 'nai-vibe' : 'ST'}): model=${model}${look.fromBlock ? ' (from block)' : ''}, ${width}x${height}, steps=${body.steps}, cfg=${body.scale}${body.cfg_rescale ? `/rescale ${body.cfg_rescale}` : ''}, ${body.sampler}${look.v5 ? '' : `/${body.scheduler}`}${body.seed !== undefined ? `, seed=${body.seed}` : ''}${body.skip_cfg_above_sigma ? `, skip_cfg>${body.skip_cfg_above_sigma}` : ''}, style=${styleEntry ? `«${styleEntry.name}»` : (styleTags ? 'house' : 'none')}, chars=${body.characters.length}, coords=${body.characters.some(c => c.center)}, bubbles=${instr.bubbles.length}, vibes=${body.vibes.map(v => `${v.name}:${v.strength}`).join(' ') || 'none'}`);
     iigLog('INFO', `NovelAI prompt: ${body.prompt.slice(0, 300)}`);
     for (const c of body.characters) iigLog('INFO', `NovelAI char${c.center ? ` @${c.center.x},${c.center.y}` : ''}: ${c.prompt.slice(0, 200)}${c.uc ? ` | uc: ${c.uc.slice(0, 120)}` : ''}`);
     iigLog('INFO', `NovelAI negative: ${body.negative_prompt.slice(0, 300)}`);
@@ -6606,7 +6891,7 @@ function createSettingsUI() {
 
                     <!-- API -->
                 <div class="iig-section">
-                    <h4><i class="fa-solid fa-plug"></i> API</h4>
+                    <h4 data-sec="api"><i class="fa-solid fa-plug"></i> API</h4>
                     <div class="flex-row"><label>Профиль</label><div class="flex1" style="display:flex;gap:6px;min-width:0;"><select id="slay_conn_profile" class="flex1" style="min-width:0;"><option value="">— профили подключений —</option></select><div id="slay_conn_profile_save" class="menu_button" title="Сохранить текущее подключение как профиль"><i class="fa-solid fa-floppy-disk"></i></div><div id="slay_conn_profile_delete" class="menu_button" title="Удалить выбранный профиль"><i class="fa-solid fa-trash-can"></i></div></div></div>
                     <div class="flex-row"><label>Тип API</label><select id="slay_api_type" class="flex1"><option value="openai" ${settings.apiType === 'openai' ? 'selected' : ''}>OpenAI-compatible</option><option value="gemini" ${settings.apiType === 'gemini' ? 'selected' : ''}>Gemini-compatible</option><option value="naistera" ${settings.apiType === 'naistera' ? 'selected' : ''}>Naistera</option><option value="novelai" ${settings.apiType === 'novelai' ? 'selected' : ''}>NovelAI (токен из ST)</option><option value="custom" ${settings.apiType === 'custom' ? 'selected' : ''}>Custom (свой URL)</option></select></div>
                     <div class="flex-row ${settings.apiType === 'custom' ? '' : 'iig-hidden'}" id="slay_custom_format_row"><label>Формат запроса</label><select id="slay_custom_body_format" class="flex1"><option value="chat" ${(settings.customBodyFormat || 'chat') === 'chat' ? 'selected' : ''}>chat/completions (мультимодальный)</option><option value="images" ${settings.customBodyFormat === 'images' ? 'selected' : ''}>images/generations (DALL-E style)</option></select></div>
@@ -6623,7 +6908,7 @@ function createSettingsUI() {
 
                 <!-- Gen params -->
                 <div class="iig-section">
-                    <h4><i class="fa-solid fa-sliders"></i> Параметры генерации</h4>
+                    <h4 data-sec="gen"><i class="fa-solid fa-sliders"></i> Параметры генерации</h4>
                     <div class="flex-row ${settings.apiType !== 'openai' ? 'iig-hidden' : ''}" id="slay_size_row"><label>Размер</label><select id="slay_size" class="flex1"><option value="1024x1024" ${settings.size === '1024x1024' ? 'selected' : ''}>1024x1024</option><option value="1792x1024" ${settings.size === '1792x1024' ? 'selected' : ''}>1792x1024</option><option value="1024x1792" ${settings.size === '1024x1792' ? 'selected' : ''}>1024x1792</option><option value="512x512" ${settings.size === '512x512' ? 'selected' : ''}>512x512</option></select></div>
                     <div class="flex-row ${settings.apiType !== 'openai' ? 'iig-hidden' : ''}" id="slay_quality_row"><label>Качество</label><select id="slay_quality" class="flex1"><option value="standard" ${settings.quality === 'standard' ? 'selected' : ''}>Standard</option><option value="hd" ${settings.quality === 'hd' ? 'selected' : ''}>HD</option></select></div>
                     <div id="slay_gemini_params" class="${settings.apiType !== 'gemini' ? 'iig-hidden' : ''}">
@@ -6632,20 +6917,37 @@ function createSettingsUI() {
                     </div>
                     <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="slay_naistera_model_row"><label>Модель Naistera</label><select id="slay_naistera_model" class="flex1"><option value="grok" ${normalizeNaisteraModel(settings.naisteraModel) === 'grok' ? 'selected' : ''}>Grok</option><option value="nano banana" ${normalizeNaisteraModel(settings.naisteraModel) === 'nano banana' ? 'selected' : ''}>Nano Banana</option><option value="grok-pro" ${normalizeNaisteraModel(settings.naisteraModel) === 'grok-pro' ? 'selected' : ''}>Grok Pro</option><option value="novelai" ${normalizeNaisteraModel(settings.naisteraModel) === 'novelai' ? 'selected' : ''}>NovelAI</option></select></div>
                     <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="slay_naistera_aspect_row"><label>Соотношение</label><select id="slay_naistera_aspect_ratio" class="flex1"><option value="auto" ${(settings.naisteraAspectRatio || 'auto') === 'auto' ? 'selected' : ''}>Из промпта</option><option value="1:1" ${settings.naisteraAspectRatio === '1:1' ? 'selected' : ''}>1:1</option><option value="3:2" ${settings.naisteraAspectRatio === '3:2' ? 'selected' : ''}>3:2</option><option value="2:3" ${settings.naisteraAspectRatio === '2:3' ? 'selected' : ''}>2:3</option></select></div>
-                    <div class="flex-row ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_model_row"><label>Модель NovelAI</label><select id="slay_novelai_model" class="flex1"><option value="nai-diffusion-5-full" ${(settings.novelaiModel || 'nai-diffusion-5-full') === 'nai-diffusion-5-full' ? 'selected' : ''}>NAI Diffusion V5</option><option value="nai-diffusion-4-5-full" ${settings.novelaiModel === 'nai-diffusion-4-5-full' ? 'selected' : ''}>NAI Diffusion 4.5 Full</option><option value="nai-diffusion-4-5-curated" ${settings.novelaiModel === 'nai-diffusion-4-5-curated' ? 'selected' : ''}>NAI Diffusion 4.5 Curated</option><option value="nai-diffusion-4-full" ${settings.novelaiModel === 'nai-diffusion-4-full' ? 'selected' : ''}>NAI Diffusion 4 Full</option><option value="nai-diffusion-3" ${settings.novelaiModel === 'nai-diffusion-3' ? 'selected' : ''}>NAI Diffusion 3 (Anime V3)</option></select></div>
-                    <div class="flex-row ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_aspect_row"><label>Соотношение</label><select id="slay_novelai_aspect_ratio" class="flex1"><option value="auto" ${(settings.novelaiAspectRatio || 'auto') === 'auto' ? 'selected' : ''}>Из промпта</option><option value="1:1" ${settings.novelaiAspectRatio === '1:1' ? 'selected' : ''}>1:1 (1024×1024)</option><option value="2:3" ${settings.novelaiAspectRatio === '2:3' ? 'selected' : ''}>2:3 портрет (832×1216)</option><option value="3:2" ${settings.novelaiAspectRatio === '3:2' ? 'selected' : ''}>3:2 альбом (1216×832)</option></select></div>
-                    <div class="flex-row ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_negative_row"><label>Negative</label><input type="text" id="slay_novelai_negative" class="text_pole flex1" value="${sanitizeForHtml(settings.novelaiNegativePrompt || '')}" placeholder="что исключить (можно пусто)"></div>
-                    <label class="checkbox_label ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_quality_row"><input type="checkbox" id="slay_novelai_quality" ${settings.novelaiQuality !== false ? 'checked' : ''}><span style="font-size:0.85em;opacity:0.85;">Теги качества, как на сайте NAI (very aesthetic, masterpiece)</span></label>
-                    <div class="${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_vibes_row" style="margin-top:4px;">
-                        <div class="flex-row"><label>Вайбы</label><div class="flex1" style="font-size:0.85em;opacity:0.85;">стиль с картинки-образца (.naiv4vibe); сила 0.2–0.6 обычно. Без галочек на 4.5 идёт домашний набор (violet 0.6 + red 0.2, ночь: violet + dan); на V5 вайбы всегда выключены</div><label class="menu_button" title="Загрузить .naiv4vibe" style="margin:0;"><i class="fa-solid fa-upload"></i><input type="file" id="slay_novelai_vibe_file" accept=".naiv4vibe,.json" multiple hidden></label></div>
+                    <div id="slay_novelai_params" class="${settings.apiType === 'novelai' ? '' : 'iig-hidden'}">
+                    <div class="flex-row" id="slay_novelai_model_row"><label>Модель NovelAI</label><select id="slay_novelai_model" class="flex1"><option value="nai-diffusion-5-full" ${(settings.novelaiModel || 'nai-diffusion-5-full') === 'nai-diffusion-5-full' ? 'selected' : ''}>NAI Diffusion V5</option><option value="nai-diffusion-4-5-full" ${settings.novelaiModel === 'nai-diffusion-4-5-full' ? 'selected' : ''}>NAI Diffusion 4.5 Full</option><option value="nai-diffusion-4-5-curated" ${settings.novelaiModel === 'nai-diffusion-4-5-curated' ? 'selected' : ''}>NAI Diffusion 4.5 Curated</option><option value="nai-diffusion-4-full" ${settings.novelaiModel === 'nai-diffusion-4-full' ? 'selected' : ''}>NAI Diffusion 4 Full</option><option value="nai-diffusion-3" ${settings.novelaiModel === 'nai-diffusion-3' ? 'selected' : ''}>NAI Diffusion 3 (Anime V3)</option></select></div>
+                    <div class="flex-row" id="slay_novelai_aspect_row"><label>Размер</label><select id="slay_novelai_aspect_ratio" class="flex1">${NAI_SIZE_OPTIONS.map(o => `<option value="${o.v}" ${(settings.novelaiAspectRatio || 'auto') === o.v ? 'selected' : ''}>${o.l}</option>`).join('')}</select></div>
+                    <div class="flex-row ${settings.novelaiAspectRatio === 'custom' ? '' : 'iig-hidden'}" id="slay_novelai_custom_size_row"><label>Своё W × H</label><div class="flex1" style="display:flex;gap:6px;align-items:center;"><input type="number" id="slay_novelai_width" class="text_pole flex1" value="${Number(settings.novelaiWidth) || 832}" min="64" max="2048" step="64"><span>×</span><input type="number" id="slay_novelai_height" class="text_pole flex1" value="${Number(settings.novelaiHeight) || 1216}" min="64" max="2048" step="64"></div></div>
+                    <p class="hint" id="slay_novelai_cost" style="margin-top:0;"></p>
+                    <div class="flex-row" id="slay_novelai_style_row"><label>Стиль</label><div class="flex1" style="display:flex;gap:6px;align-items:center;min-width:0;"><span id="slay_novelai_style_name" class="iig-nai-active-name">…</span><div id="slay_novelai_style_btn" class="menu_button" style="white-space:nowrap;flex-shrink:0;display:inline-flex;align-items:center;gap:7px;" title="Библиотека стилей NovelAI"><i class="fa-solid fa-palette"></i><span>Библиотека</span></div></div></div>
+                    <div class="flex-row" id="slay_novelai_negative_row"><label>Негатив</label><div class="flex1" style="display:flex;gap:6px;align-items:center;min-width:0;"><span id="slay_novelai_negative_name" class="iig-nai-active-name">…</span><div id="slay_novelai_negative_btn" class="menu_button" style="white-space:nowrap;flex-shrink:0;display:inline-flex;align-items:center;gap:7px;" title="Библиотека негативов NovelAI"><i class="fa-solid fa-ban"></i><span>Библиотека</span></div></div></div>
+                    <label class="checkbox_label" id="slay_novelai_quality_row"><input type="checkbox" id="slay_novelai_quality" ${settings.novelaiQuality !== false ? 'checked' : ''}><span style="font-size:0.85em;opacity:0.85;">Теги качества, как на сайте NAI (very aesthetic, masterpiece; уже имеющиеся в стиле не дублируются)</span></label>
+                    <div id="slay_novelai_vibes_row" style="margin-top:4px;">
+                        <div class="flex-row"><label>Вайбы</label><div class="flex1" style="font-size:0.85em;opacity:0.85;">стиль с картинки-образца (.naiv4vibe); сила 0.2–0.6 обычно. Без галочек на 4.5 идёт домашний вайб (aur10 0.6); на V5 вайбы всегда выключены</div><label class="menu_button" title="Загрузить .naiv4vibe" style="margin:0;"><i class="fa-solid fa-upload"></i><input type="file" id="slay_novelai_vibe_file" accept=".naiv4vibe,.json" multiple hidden></label></div>
                         <div id="slay_novelai_vibe_list"></div>
                     </div>
-                    <div class="flex-row" id="slay_style_row"><label>Стиль</label><div class="flex1" style="display:flex;gap:6px;align-items:center;min-width:0;"><span id="slay_style_name" style="flex:1;min-width:30px;font-size:0.8em;opacity:0.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${settings.slayStyleName || 'Не заменять'}</span><div id="slay_style_pick_btn" class="menu_button" style="white-space:nowrap;flex-shrink:0;display:inline-flex;align-items:center;gap:7px;"><i class="fa-solid fa-palette"></i><span>Выбрать</span></div></div></div>
+                    <div class="iig-subsection" id="slay_novelai_advanced">
+                        <div class="iig-subhead" data-sec="nai-adv"><i class="fa-solid fa-sliders"></i> Тонкие настройки NovelAI</div>
+                        <div class="flex-row"><label>Шаги</label><input type="number" id="slay_novelai_steps" class="text_pole flex1" value="${Number(settings.novelaiSteps) || 28}" min="1" max="50" step="1"><span class="hint" style="margin:0 0 0 6px;white-space:nowrap;">до 28 бесплатно</span></div>
+                        <div class="flex-row"><label>CFG</label><input type="number" id="slay_novelai_cfg" class="text_pole flex1" value="${Number.isFinite(Number(settings.novelaiCfgScale)) ? Number(settings.novelaiCfgScale) : 5}" min="0" max="10" step="0.1"></div>
+                        <div class="flex-row"><label>CFG rescale</label><input type="number" id="slay_novelai_cfg_rescale" class="text_pole flex1" value="${Number(settings.novelaiCfgRescale) || 0}" min="0" max="1" step="0.01"></div>
+                        <div class="flex-row"><label>Сэмплер</label><select id="slay_novelai_sampler" class="flex1">${NAI_SAMPLER_OPTIONS.map(o => `<option value="${o.v}" ${(settings.novelaiSampler || 'k_euler_ancestral') === o.v ? 'selected' : ''}>${o.l}</option>`).join('')}</select></div>
+                        <div class="flex-row" id="slay_novelai_schedule_row"><label>Noise schedule</label><select id="slay_novelai_schedule" class="flex1">${['karras', 'native', 'exponential', 'polyexponential'].map(v => `<option value="${v}" ${(settings.novelaiNoiseSchedule || 'karras') === v ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+                        <div class="flex-row" id="slay_novelai_skipcfg_row"><label>Skip CFG above σ</label><input type="number" id="slay_novelai_skip_cfg" class="text_pole flex1" value="${Number(settings.novelaiSkipCfgAboveSigma) || 0}" min="0" max="100" step="0.1" title="0 = выключено; NAI «CFG delay» (variety+) ≈ 19"></div>
+                        <div class="flex-row"><label>Seed</label><input type="number" id="slay_novelai_seed" class="text_pole flex1" value="${Number.isFinite(Number(settings.novelaiSeed)) ? Number(settings.novelaiSeed) : -1}" min="-1" max="4294967295" step="1" title="−1 = случайный"><div id="slay_novelai_seed_random" class="menu_button" title="Случайный (−1)"><i class="fa-solid fa-dice"></i></div></div>
+                        <label class="checkbox_label"><input type="checkbox" id="slay_novelai_allow_anlas" ${settings.novelaiAllowAnlas ? 'checked' : ''}><span style="font-size:0.85em;opacity:0.85;">Разрешить Anlas (размер больше 1 МП или больше 28 шагов). Без галочки запрос ужимается до бесплатного лимита.</span></label>
+                        <p class="hint" id="slay_novelai_plugin_hint">Без серверного плагина nai-vibe CFG rescale, skip-cfg и seed могут не примениться — они идут только через плагин.</p>
+                    </div>
+                    </div>
+                    <div class="flex-row ${settings.apiType === 'novelai' ? 'iig-hidden' : ''}" id="slay_style_row"><label>Стиль</label><div class="flex1" style="display:flex;gap:6px;align-items:center;min-width:0;"><span id="slay_style_name" style="flex:1;min-width:30px;font-size:0.8em;opacity:0.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${settings.slayStyleName || 'Не заменять'}</span><div id="slay_style_pick_btn" class="menu_button" style="white-space:nowrap;flex-shrink:0;display:inline-flex;align-items:center;gap:7px;"><i class="fa-solid fa-palette"></i><span>Выбрать</span></div></div></div>
                 </div>
 
                 <!-- NPC refs -->
                 <div id="slay_refs_section" class="iig-refs">
-                    <h4 class="iig-refs-h4">
+                    <h4 class="iig-refs-h4" data-sec="refs">
                         <span><i class="fa-solid fa-user-group"></i> Референсы персонажей</span>
                         <button type="button" id="slay_saved_toggle" class="iig-saved-toggle" title="Сохранённые персонажи — портреты с именами, годятся для любого чата">
                             <i class="fa-solid fa-heart"></i> Сохранённые <span id="slay_saved_count" class="iig-saved-count"></span>
@@ -6679,7 +6981,7 @@ function createSettingsUI() {
                      the panel is unchanged. -->
                 <div id="slay_wardrobe_body" class="${swSettings.wardrobeEnabled !== false ? '' : 'iig-hidden'}">
                 <div class="iig-section">
-                    <h4><i class="fa-solid fa-shirt"></i> Гардероб</h4>
+                    <h4 data-sec="wardrobe"><i class="fa-solid fa-shirt"></i> Гардероб</h4>
                     <p class="hint" id="slay_wardrobe_hint">Загрузите аутфиты для бота и юзера. Словесное описание надетого добавляется в промпт <b>независимо от генерации картинок</b> — гардеробом можно пользоваться и с выключенной генерацией. Изображение активного аутфита отправляется как референс, когда генерация включена.</p>
                     <div class="flex-row"><div id="slay_sw_open_wardrobe" class="menu_button" style="width:100%;"><i class="fa-solid fa-shirt"></i> Открыть гардероб</div></div>
                     <label class="checkbox_label" style="margin-top:8px;"><input type="checkbox" id="slay_sw_auto_describe" ${swSettings.autoDescribe !== false ? 'checked' : ''}><span>Авто-описание аутфитов через ИИ</span></label>
@@ -6726,14 +7028,14 @@ function createSettingsUI() {
                 <div id="slay_settings_body2" class="${settings.enabled ? '' : 'iig-hidden'}">
                 <!-- Image context -->
                 <div id="slay_image_context_section" class="iig-section">
-                    <h4><i class="fa-solid fa-layer-group"></i> Контекст изображений</h4>
+                    <h4 data-sec="context"><i class="fa-solid fa-layer-group"></i> Контекст изображений</h4>
                     <label class="checkbox_label"><input type="checkbox" id="slay_image_context_enabled" ${settings.imageContextEnabled ? 'checked' : ''}><span>Отправлять предыдущие картинки как reference</span></label>
                     <div class="flex-row ${settings.imageContextEnabled ? '' : 'iig-hidden'}" id="slay_image_context_count_row"><label>Кол-во (макс ${MAX_CONTEXT_IMAGES})</label><input type="number" id="slay_image_context_count" class="text_pole flex1" value="${settings.imageContextCount}" min="1" max="${MAX_CONTEXT_IMAGES}"></div>
                 </div>
 
                 <!-- Naistera video -->
                 <div id="slay_naistera_video_section" class="iig-section ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}">
-                    <h4><i class="fa-solid fa-video"></i> Видео (Naistera)</h4>
+                    <h4 data-sec="video"><i class="fa-solid fa-video"></i> Видео (Naistera)</h4>
                     <label class="checkbox_label"><input type="checkbox" id="slay_naistera_video_test" ${settings.naisteraVideoTest ? 'checked' : ''}><span>Video test mode</span></label>
                     <div class="flex-row ${settings.naisteraVideoTest ? '' : 'iig-hidden'}" id="slay_naistera_video_frequency_row"><label>Каждые N сообщений</label><input type="number" id="slay_naistera_video_every_n" class="text_pole flex1" value="${settings.naisteraVideoEveryN}" min="1" max="999"></div>
                 </div>
@@ -6741,7 +7043,7 @@ function createSettingsUI() {
 
                 <!-- Retry -->
                 <div class="iig-section">
-                    <h4><i class="fa-solid fa-rotate"></i> Повторы</h4>
+                    <h4 data-sec="retry"><i class="fa-solid fa-rotate"></i> Повторы</h4>
                     <div class="flex-row"><label>Макс. повторов</label><input type="number" id="slay_max_retries" class="text_pole flex1" value="${settings.maxRetries}" min="0" max="5"></div>
                     <div class="flex-row"><label>Задержка (мс)</label><input type="number" id="slay_retry_delay" class="text_pole flex1" value="${settings.retryDelay}" min="500" max="10000" step="500"></div>
                 </div>
@@ -6749,7 +7051,7 @@ function createSettingsUI() {
 
                 <!-- Debug -->
                 <div class="iig-section">
-                    <h4><i class="fa-solid fa-bug"></i> Отладка</h4>
+                    <h4 data-sec="debug"><i class="fa-solid fa-bug"></i> Отладка</h4>
                     <div id="slay_export_logs" class="menu_button"><i class="fa-solid fa-download"></i> Экспорт логов</div>
                 </div>
                 </div>
@@ -6785,6 +7087,7 @@ function createSettingsUI() {
     }
     container.insertAdjacentHTML('beforeend', html);
     bindSettingsEvents();
+    initCollapsibleSections(container.querySelector('.iig-settings'));
     bindRefSlotEvents();
     renderRefSlots();
     renderRecentRefsRibbon();
@@ -8057,12 +8360,10 @@ function bindSettingsEvents() {
         document.getElementById('slay_endpoint_row')?.classList.toggle('iig-hidden', isNovelAI);
         document.getElementById('slay_api_key_row')?.classList.toggle('iig-hidden', isNovelAI);
         document.getElementById('slay_novelai_hint')?.classList.toggle('iig-hidden', !isNovelAI);
-        document.getElementById('slay_novelai_model_row')?.classList.toggle('iig-hidden', !isNovelAI);
-        document.getElementById('slay_novelai_aspect_row')?.classList.toggle('iig-hidden', !isNovelAI);
-        document.getElementById('slay_novelai_negative_row')?.classList.toggle('iig-hidden', !isNovelAI);
-        document.getElementById('slay_novelai_quality_row')?.classList.toggle('iig-hidden', !isNovelAI);
-        document.getElementById('slay_novelai_vibes_row')?.classList.toggle('iig-hidden', !isNovelAI);
-        if (isNovelAI) renderNovelaiVibes();
+        document.getElementById('slay_novelai_params')?.classList.toggle('iig-hidden', !isNovelAI);
+        // The prose style catalogue is for the other APIs; NovelAI has its own tag library.
+        document.getElementById('slay_style_row')?.classList.toggle('iig-hidden', isNovelAI);
+        if (isNovelAI) { renderNovelaiVibes(); updateNaiKnobsUI(); }
         // size (WxH) is used by openai dall-e style AND custom images/generations
         document.getElementById('slay_size_row')?.classList.toggle('iig-hidden', !(isOpenAI || isCustomImages));
         document.getElementById('slay_quality_row')?.classList.toggle('iig-hidden', !isOpenAI);
@@ -8159,7 +8460,12 @@ function bindSettingsEvents() {
         settings.customBodyFormat = p.customBodyFormat || 'chat';
         settings.novelaiModel = p.novelaiModel || 'nai-diffusion-5-full';
         settings.novelaiAspectRatio = p.novelaiAspectRatio || 'auto';
-        settings.novelaiNegativePrompt = p.novelaiNegativePrompt || '';
+        for (const k of NAI_PROFILE_KEYS) {
+            if (k === 'novelaiModel' || k === 'novelaiAspectRatio' || p[k] === undefined) continue;
+            settings[k] = k === 'naiActiveStyle' ? { ...(p[k] || {}) } : p[k];
+        }
+        // Profiles saved before the library carried a single-line negative: it becomes the «Своё» entry.
+        if (p.novelaiNegativePrompt && !p.naiActiveNegative) settings.novelaiNegativePrompt = p.novelaiNegativePrompt;
         saveSettings();
         // Sync visible inputs to the applied profile
         const typeSel = document.getElementById('slay_api_type');
@@ -8176,8 +8482,7 @@ function bindSettingsEvents() {
         if (naiModelSel) naiModelSel.value = settings.novelaiModel;
         const naiAspectSel = document.getElementById('slay_novelai_aspect_ratio');
         if (naiAspectSel) naiAspectSel.value = settings.novelaiAspectRatio;
-        const naiNegInput = document.getElementById('slay_novelai_negative');
-        if (naiNegInput) naiNegInput.value = settings.novelaiNegativePrompt;
+        syncNaiKnobInputs();
         updateVisibility();
         toastr.success(`Профиль «${name}» применён`, 'SLAY Images', { timeOut: 2000 });
     });
@@ -8194,10 +8499,11 @@ function bindSettingsEvents() {
             apiKey: settings.apiKey,
             model: settings.model,
             customBodyFormat: settings.customBodyFormat || 'chat',
-            novelaiModel: settings.novelaiModel,
-            novelaiAspectRatio: settings.novelaiAspectRatio,
-            novelaiNegativePrompt: settings.novelaiNegativePrompt,
         };
+        for (const k of NAI_PROFILE_KEYS) {
+            if (settings[k] === undefined) continue;
+            snapshot[k] = k === 'naiActiveStyle' ? { ...(settings[k] || {}) } : settings[k];
+        }
         const existing = profiles.findIndex(x => x.name === name);
         if (existing >= 0) profiles[existing] = snapshot;
         else profiles.push(snapshot);
@@ -8343,9 +8649,30 @@ function bindSettingsEvents() {
     document.getElementById('slay_image_size')?.addEventListener('change', (e) => { settings.imageSize = e.target.value; saveSettings(); });
     document.getElementById('slay_naistera_model')?.addEventListener('change', (e) => { settings.naisteraModel = normalizeNaisteraModel(e.target.value); saveSettings(); updateVisibility(); });
     document.getElementById('slay_naistera_aspect_ratio')?.addEventListener('change', (e) => { settings.naisteraAspectRatio = e.target.value; saveSettings(); });
-    document.getElementById('slay_novelai_model')?.addEventListener('change', (e) => { settings.novelaiModel = e.target.value; saveSettings(); });
-    document.getElementById('slay_novelai_aspect_ratio')?.addEventListener('change', (e) => { settings.novelaiAspectRatio = e.target.value; saveSettings(); });
-    document.getElementById('slay_novelai_negative')?.addEventListener('input', (e) => { settings.novelaiNegativePrompt = e.target.value; saveSettings(); });
+    document.getElementById('slay_novelai_model')?.addEventListener('change', (e) => { settings.novelaiModel = e.target.value; saveSettings(); updateNaiKnobsUI(); });
+    document.getElementById('slay_novelai_aspect_ratio')?.addEventListener('change', (e) => { settings.novelaiAspectRatio = e.target.value; saveSettings(); updateNaiKnobsUI(); });
+    // Numeric knobs: stored as typed, clamped by normalizeNaiParams when the request is built.
+    const naiNumeric = [
+        ['slay_novelai_width', 'novelaiWidth'], ['slay_novelai_height', 'novelaiHeight'], ['slay_novelai_steps', 'novelaiSteps'],
+        ['slay_novelai_cfg', 'novelaiCfgScale'], ['slay_novelai_cfg_rescale', 'novelaiCfgRescale'], ['slay_novelai_skip_cfg', 'novelaiSkipCfgAboveSigma'],
+        ['slay_novelai_seed', 'novelaiSeed'],
+    ];
+    for (const [id, key] of naiNumeric) {
+        document.getElementById(id)?.addEventListener('input', (e) => {
+            const n = Number(e.target.value);
+            if (e.target.value === '' || !Number.isFinite(n)) return;
+            settings[key] = n; saveSettings(); updateNaiKnobsUI();
+        });
+    }
+    document.getElementById('slay_novelai_seed_random')?.addEventListener('click', () => {
+        settings.novelaiSeed = -1; saveSettings();
+        const el = document.getElementById('slay_novelai_seed'); if (el) el.value = '-1';
+    });
+    document.getElementById('slay_novelai_sampler')?.addEventListener('change', (e) => { settings.novelaiSampler = e.target.value; saveSettings(); });
+    document.getElementById('slay_novelai_schedule')?.addEventListener('change', (e) => { settings.novelaiNoiseSchedule = e.target.value; saveSettings(); });
+    document.getElementById('slay_novelai_allow_anlas')?.addEventListener('change', (e) => { settings.novelaiAllowAnlas = e.target.checked; saveSettings(); updateNaiKnobsUI(); });
+    document.getElementById('slay_novelai_style_btn')?.addEventListener('click', () => openNaiLibraryModal('styles'));
+    document.getElementById('slay_novelai_negative_btn')?.addEventListener('click', () => openNaiLibraryModal('negatives'));
     document.getElementById('slay_novelai_quality')?.addEventListener('change', (e) => { settings.novelaiQuality = e.target.checked; saveSettings(); });
     document.getElementById('slay_novelai_vibe_file')?.addEventListener('change', async (e) => {
         const files = [...(e.target.files || [])];

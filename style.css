@@ -3271,3 +3271,86 @@
 .slay-choose-box {
     margin: auto;
 }
+
+/* ==================== Collapsible sections (every [data-sec] header toggles its parent) ==================== */
+
+.iig-settings [data-sec] {
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+.iig-settings .iig-sec-chev {
+    margin-inline-start: auto !important;
+    margin-inline-end: 0 !important;
+    font-size: 0.75em !important;
+    opacity: 0.6;
+    transition: transform 0.2s ease, opacity 0.2s ease;
+}
+.iig-settings [data-sec]:hover .iig-sec-chev { opacity: 1; transform: none; }
+.iig-settings .iig-collapsed > [data-sec] .iig-sec-chev,
+.iig-settings .iig-collapsed > [data-sec]:hover .iig-sec-chev { transform: rotate(-90deg); }
+.iig-settings .iig-collapsed > :not([data-sec]) { display: none !important; }
+.iig-settings .iig-section.iig-collapsed > h4 { margin-bottom: -14px; border-bottom: none; }
+.iig-settings .iig-refs.iig-collapsed > h4 { border-bottom: none; }
+/* refs header: keep the «Сохранённые» button next to the title, chevron at the far right */
+.iig-refs-h4 { justify-content: flex-start; }
+.iig-refs-h4 > .iig-saved-toggle { margin-left: auto; }
+
+/* nested group inside a section (NovelAI fine-tuning) */
+.iig-subsection {
+    margin-top: 8px;
+    padding-top: 4px;
+    border-top: 1px dashed color-mix(in srgb, var(--slay-pink) 25%, var(--SmartThemeBorderColor));
+}
+.iig-subhead {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0 6px;
+    font-size: 0.85em;
+    font-weight: 600;
+    color: var(--slay-pink);
+    letter-spacing: 0.02em;
+}
+.iig-subhead > i:first-child { font-size: 0.85em; opacity: 0.85; }
+
+/* ==================== NovelAI library ==================== */
+
+.iig-nai-active-name {
+    flex: 1; min-width: 30px; font-size: 0.8em; opacity: 0.8;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.slay-style-modal.iig-nai-lib { max-width: 720px; }
+.iig-nai-filters { align-items: center; }
+.iig-nai-search { flex: 1; min-width: 120px; margin: 0; }
+.iig-nai-add { white-space: nowrap; margin: 0; }
+.iig-nai-row {
+    border: 1px solid rgba(255,255,255,0.07); border-radius: 12px;
+    padding: 8px 10px; margin-bottom: 6px;
+    display: grid; grid-template-columns: 1fr auto; gap: 6px 8px; align-items: center;
+    transition: border-color .18s, background .18s;
+}
+.iig-nai-row.is-active { border-color: rgba(244,114,182,0.55); background: rgba(244,114,182,0.07); }
+.iig-nai-row-main { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; min-width: 0; }
+.iig-nai-check { margin-top: 3px; color: rgba(244,114,182,0.45); flex-shrink: 0; }
+.iig-nai-row.is-active .iig-nai-check { color: #f472b6; }
+.iig-nai-row-text { min-width: 0; }
+.iig-nai-row-name { font-weight: 600; font-size: 0.9em; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.iig-nai-row-preview { font-size: 0.74em; opacity: 0.6; line-height: 1.35; word-break: break-word; }
+.iig-nai-badge {
+    font-size: 0.68em; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+    border: 1px solid rgba(244,114,182,0.35); color: rgba(244,114,182,0.9); white-space: nowrap;
+}
+.iig-nai-badge.is-any { border-color: rgba(255,255,255,0.2); color: rgba(255,255,255,0.6); }
+.iig-nai-badge.is-on { background: rgba(244,114,182,0.2); color: #f9a8d4; }
+.iig-nai-row-acts { display: flex; gap: 4px; align-self: start; }
+.iig-nai-row-acts .menu_button { padding: 4px 8px; margin: 0; }
+.iig-nai-row-acts .menu_button.is-on { border-color: #f472b6; color: #f472b6; }
+.iig-nai-editor { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; padding-top: 4px; border-top: 1px dashed rgba(255,255,255,0.08); }
+.iig-nai-textarea { width: 100%; box-sizing: border-box; font-size: 0.85em; resize: vertical; }
+.iig-nai-foot { padding: 6px 14px 10px; margin: 0; flex-shrink: 0; font-size: 0.72em; opacity: 0.55; }
+@media (max-width: 600px) {
+    .iig-nai-row { grid-template-columns: 1fr; }
+    .iig-nai-row-acts { justify-content: flex-end; }
+}
