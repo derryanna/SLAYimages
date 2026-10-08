@@ -77,7 +77,7 @@ export async function init(router) {
         const key = readSecret(req.user.directories, SECRET_KEYS.NOVEL);
         if (!key) return res.status(400).send('NovelAI: токен не найден в API Connections → NovelAI.');
         const b = req.body || {};
-        const model = b.model || 'nai-diffusion-4-5-full';
+        const model = b.model || 'nai-diffusion-5-full';
         const dir = vibeDir(req);
         const refs = [];
         for (const v of b.vibes || []) {

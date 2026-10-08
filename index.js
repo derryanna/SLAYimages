@@ -2793,7 +2793,7 @@ const defaultSettings = Object.freeze({
     naisteraPreset: '',
     naisteraModel: 'grok',
     // NovelAI через сервер ST (/api/novelai/generate-image) — токен хранится в ST
-    novelaiModel: 'nai-diffusion-4-5-full',
+    novelaiModel: 'nai-diffusion-5-full',
     novelaiAspectRatio: 'auto',
     novelaiNegativePrompt: '',
     // Плагин сервера nai-vibe: теги качества как на сайте NAI и вайбы (.naiv4vibe) — [{ name, strength, enabled }]
@@ -4571,7 +4571,7 @@ async function typesetNaiBubbles(dataUrl, instr, nc) {
 async function generateImageNovelAI(prompt, style, options = {}) {
     const settings = getSettings();
     const ctx = SillyTavern.getContext();
-    const model = settings.novelaiModel || 'nai-diffusion-4-5-full';
+    const model = settings.novelaiModel || 'nai-diffusion-5-full';
     const nc = await loadNaiComics();
     // Structured { base, characters, bubbles } from the block, or the plain prompt (old "|" sections still split).
     const instr = nc.parseNaiInstruction(options.instruction || { prompt });
@@ -6609,7 +6609,7 @@ function createSettingsUI() {
                     </div>
                     <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="slay_naistera_model_row"><label>Модель Naistera</label><select id="slay_naistera_model" class="flex1"><option value="grok" ${normalizeNaisteraModel(settings.naisteraModel) === 'grok' ? 'selected' : ''}>Grok</option><option value="nano banana" ${normalizeNaisteraModel(settings.naisteraModel) === 'nano banana' ? 'selected' : ''}>Nano Banana</option><option value="grok-pro" ${normalizeNaisteraModel(settings.naisteraModel) === 'grok-pro' ? 'selected' : ''}>Grok Pro</option><option value="novelai" ${normalizeNaisteraModel(settings.naisteraModel) === 'novelai' ? 'selected' : ''}>NovelAI</option></select></div>
                     <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="slay_naistera_aspect_row"><label>Соотношение</label><select id="slay_naistera_aspect_ratio" class="flex1"><option value="auto" ${(settings.naisteraAspectRatio || 'auto') === 'auto' ? 'selected' : ''}>Из промпта</option><option value="1:1" ${settings.naisteraAspectRatio === '1:1' ? 'selected' : ''}>1:1</option><option value="3:2" ${settings.naisteraAspectRatio === '3:2' ? 'selected' : ''}>3:2</option><option value="2:3" ${settings.naisteraAspectRatio === '2:3' ? 'selected' : ''}>2:3</option></select></div>
-                    <div class="flex-row ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_model_row"><label>Модель NovelAI</label><select id="slay_novelai_model" class="flex1"><option value="nai-diffusion-4-5-full" ${(settings.novelaiModel || 'nai-diffusion-4-5-full') === 'nai-diffusion-4-5-full' ? 'selected' : ''}>NAI Diffusion 4.5 Full</option><option value="nai-diffusion-4-5-curated" ${settings.novelaiModel === 'nai-diffusion-4-5-curated' ? 'selected' : ''}>NAI Diffusion 4.5 Curated</option><option value="nai-diffusion-4-full" ${settings.novelaiModel === 'nai-diffusion-4-full' ? 'selected' : ''}>NAI Diffusion 4 Full</option><option value="nai-diffusion-3" ${settings.novelaiModel === 'nai-diffusion-3' ? 'selected' : ''}>NAI Diffusion 3 (Anime V3)</option></select></div>
+                    <div class="flex-row ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_model_row"><label>Модель NovelAI</label><select id="slay_novelai_model" class="flex1"><option value="nai-diffusion-5-full" ${(settings.novelaiModel || 'nai-diffusion-5-full') === 'nai-diffusion-5-full' ? 'selected' : ''}>NAI Diffusion V5</option><option value="nai-diffusion-4-5-full" ${settings.novelaiModel === 'nai-diffusion-4-5-full' ? 'selected' : ''}>NAI Diffusion 4.5 Full</option><option value="nai-diffusion-4-5-curated" ${settings.novelaiModel === 'nai-diffusion-4-5-curated' ? 'selected' : ''}>NAI Diffusion 4.5 Curated</option><option value="nai-diffusion-4-full" ${settings.novelaiModel === 'nai-diffusion-4-full' ? 'selected' : ''}>NAI Diffusion 4 Full</option><option value="nai-diffusion-3" ${settings.novelaiModel === 'nai-diffusion-3' ? 'selected' : ''}>NAI Diffusion 3 (Anime V3)</option></select></div>
                     <div class="flex-row ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_aspect_row"><label>Соотношение</label><select id="slay_novelai_aspect_ratio" class="flex1"><option value="auto" ${(settings.novelaiAspectRatio || 'auto') === 'auto' ? 'selected' : ''}>Из промпта</option><option value="1:1" ${settings.novelaiAspectRatio === '1:1' ? 'selected' : ''}>1:1 (1024×1024)</option><option value="2:3" ${settings.novelaiAspectRatio === '2:3' ? 'selected' : ''}>2:3 портрет (832×1216)</option><option value="3:2" ${settings.novelaiAspectRatio === '3:2' ? 'selected' : ''}>3:2 альбом (1216×832)</option></select></div>
                     <div class="flex-row ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_negative_row"><label>Negative</label><input type="text" id="slay_novelai_negative" class="text_pole flex1" value="${sanitizeForHtml(settings.novelaiNegativePrompt || '')}" placeholder="что исключить (можно пусто)"></div>
                     <label class="checkbox_label ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}" id="slay_novelai_quality_row"><input type="checkbox" id="slay_novelai_quality" ${settings.novelaiQuality !== false ? 'checked' : ''}><span style="font-size:0.85em;opacity:0.85;">Теги качества, как на сайте NAI (very aesthetic, masterpiece)</span></label>
@@ -8134,7 +8134,7 @@ function bindSettingsEvents() {
         settings.apiKey = p.apiKey || '';
         settings.model = p.model || '';
         settings.customBodyFormat = p.customBodyFormat || 'chat';
-        settings.novelaiModel = p.novelaiModel || 'nai-diffusion-4-5-full';
+        settings.novelaiModel = p.novelaiModel || 'nai-diffusion-5-full';
         settings.novelaiAspectRatio = p.novelaiAspectRatio || 'auto';
         settings.novelaiNegativePrompt = p.novelaiNegativePrompt || '';
         saveSettings();

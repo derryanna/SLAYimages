@@ -6,7 +6,7 @@ import { buildGenerateRequest, snapToGrid, normalizeCharacters, withQuality, cla
 test('plain prompt request is backward compatible', () => {
     const r = buildGenerateRequest({ prompt: '1girl, blonde hair, smile', negative_prompt: 'lowres', width: 832, height: 1216 });
     assert.equal(r.action, 'generate');
-    assert.equal(r.model, 'nai-diffusion-4-5-full');
+    assert.equal(r.model, 'nai-diffusion-5-full');
     assert.equal(r.input, '1girl, blonde hair, smile, very aesthetic, masterpiece, no text');
     const p = r.parameters;
     assert.equal(p.params_version, 3);

@@ -2,6 +2,7 @@
 // No SillyTavern imports here so it can be unit-tested with plain node.
 
 export const MODEL_KEYS = {
+    'nai-diffusion-5-full': 'v5full',   // key in .naiv4vibe files is a guess; V5 vibes untested
     'nai-diffusion-4-5-full': 'v4-5full',
     'nai-diffusion-4-5-curated': 'v4-5curated',
     'nai-diffusion-4-full': 'v4full',
@@ -78,7 +79,7 @@ export function clampSize(width, height) {
  * @param {Array<{encoding:string, strength:number, ie:number}>} refs vibe encodings
  */
 export function buildGenerateRequest(b = {}, refs = []) {
-    const model = b.model || 'nai-diffusion-4-5-full';
+    const model = b.model || 'nai-diffusion-5-full';
     const rawPrompt = String(b.prompt ?? b.base ?? '');
     const prompt = b.quality === false ? rawPrompt : withQuality(rawPrompt);
     const negative = String(b.negative_prompt || '');
