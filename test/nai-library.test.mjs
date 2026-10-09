@@ -80,6 +80,8 @@ test('fallback: empty or broken library and missing pointers give the house cons
     assert.equal(activeNaiNegativeText(s), NAI_DEFAULT_NEGATIVE, 'dangling pointer → constant');
     setActiveNaiStyle(s, '', NAI_MODEL_45);
     assert.equal(activeNaiStyleTags(s, NAI_MODEL_45), '', 'explicit none');
+    assert.equal(activeNaiStyleTags(s, NAI_MODEL_V5), '', '«Без стиля» switches both models off');
+    assert.deepEqual(s.naiActiveStyle, { '4.5': '', v5: '' });
     setActiveNaiNegative(s, '');
     assert.equal(activeNaiNegativeText(s), '');
     assert.equal(activeNaiStyleTags({}, undefined), NAI_DEFAULT_STYLE_45, 'no model, no library → 4.5 constant');

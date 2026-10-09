@@ -4685,12 +4685,12 @@ async function openNaiLibraryModal(initialKind = 'styles') {
         const all = nl.naiEntries(settings, kind);
         const list = nl.filterNaiEntries(all, query);
         const curKey = nl.naiModelKey(settings.novelaiModel);
-        const noneOn = kind === 'negatives' ? settings.naiActiveNegative === '' : settings.naiActiveStyle?.[curKey] === '';
+        const noneOn = kind === 'negatives' ? settings.naiActiveNegative === '' : (settings.naiActiveStyle?.['4.5'] === '' && settings.naiActiveStyle?.v5 === '');
         const rows = [];
         rows.push(`<div class="iig-nai-row iig-nai-none ${noneOn ? 'is-active' : ''}" data-none="1">
             <div class="iig-nai-row-main"><i class="fa-solid ${noneOn ? 'fa-circle-check' : 'fa-circle'} iig-nai-check"></i>
-            <div class="iig-nai-row-text"><div class="iig-nai-row-name">${kind === 'negatives' ? 'Без негатива' : `Без стиля <span class="iig-nai-badge">${curKey === 'v5' ? 'V5' : '4.5'}</span>`}</div>
-            <div class="iig-nai-row-preview">${kind === 'negatives' ? 'пустой негатив' : 'в промпт идёт только сцена из блока'}</div></div></div></div>`);
+            <div class="iig-nai-row-text"><div class="iig-nai-row-name">${kind === 'negatives' ? 'Без негатива' : 'Без стиля <span class="iig-nai-badge">4.5</span> <span class="iig-nai-badge">V5</span>'}</div>
+            <div class="iig-nai-row-preview">${kind === 'negatives' ? 'пустой негатив' : 'выключает стиль у обеих моделей: в промпт идёт только сцена из блока'}</div></div></div></div>`);
         for (const e of list) {
             const slots = activeSlots(e);
             const on = slots.length > 0;

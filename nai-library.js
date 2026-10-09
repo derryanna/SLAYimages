@@ -336,7 +336,9 @@ export function removeNaiEntry(settings, kind, id) {
 export function setActiveNaiStyle(settings, id, forModel) {
     settings.naiActiveStyle = settings.naiActiveStyle && typeof settings.naiActiveStyle === 'object' ? settings.naiActiveStyle : {};
     const slot = naiModelKey(forModel);
-    if (id === '' || id == null) { settings.naiActiveStyle[slot] = ''; return slot; }
+    // «Без стиля» is an off switch for both models: otherwise the slot of the model that is not selected
+    // in the settings keeps its style and there is no row to clear it from.
+    if (id === '' || id == null) { settings.naiActiveStyle['4.5'] = ''; settings.naiActiveStyle.v5 = ''; return slot; }
     const e = findNaiEntry(settings, 'styles', id);
     if (!e) return null;
     const key = e.model === 'any' ? slot : e.model;

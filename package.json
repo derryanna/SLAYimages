@@ -1,6 +1,6 @@
 {
   "name": "slay-images-fork",
-  "version": "5.1.0",
+  "version": "5.1.1",
   "private": true,
   "type": "module",
   "description": "SLAY Images fork: NovelAI V4.5 character prompts, comic pages and Russian speech bubbles.",
