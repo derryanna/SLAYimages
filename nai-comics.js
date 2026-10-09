@@ -40,7 +40,7 @@ export function isNaiV5(model) {
 // violet = s3 (painterly skin, muted colours), red = s1 (warmth; 0.2 — above that it tints the hair),
 // dan = the Danone panel crop for night/intimate scenes.
 export const NAI_HOUSE_VIBES = {
-    // Anna's pick 8 Oct 2026: the vibe made from her own Aurora reference, alone (sheet «1 E3, глаза»)
+    // Picked 8 Oct 2026: the vibe made from the Aurora reference alone (sheet «1 E3, глаза»)
     day: [{ name: 'aur10', strength: 0.6 }],
     night: [{ name: 'aur10', strength: 0.6 }],
 };
@@ -51,7 +51,7 @@ export const NAI_V5_SUFFIX = 'soft painterly shading, faces close and large in f
 /**
  * Model, vibes and base suffix for one image.
  *   blockModel true: instr.model (from the block) beats settingsModel; absent → settingsModel.
- *   blockModel false (Anna's choice 8 Oct 2026, the default): the UI model always wins, the block's model is ignored.
+ *   blockModel false (chosen 8 Oct 2026, the default): the UI model always wins, the block's model is ignored.
  *   V5: vibes always off (V5 rejects 4.5 vibes) + NAI_V5_SUFFIX.
  *   4.5: the vibes ticked in the UI; none ticked → house set (night when the base is nsfw),
  *        limited to the vibe names the server actually has when serverVibes is given.

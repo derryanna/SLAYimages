@@ -8421,7 +8421,7 @@ function bindSettingsEvents() {
         // show for gemini, openai, and custom chat-format alike.
         document.getElementById('slay_gemini_params')?.classList.toggle('iig-hidden', !(isGemini || isOpenAI || (isCustom && !isCustomImages)));
 
-        // NovelAI: the slots and saved portraits stay visible (Anna keeps them there), nothing is sent to NovelAI.
+        // NovelAI: the slots and saved portraits stay visible as a library; nothing is sent to NovelAI.
         document.getElementById('slay_refs_section')?.classList.toggle('iig-hidden', !(supportsRefs || isNovelAI));
         let naiRefsHint = document.getElementById('slay_refs_nai_hint');
         if (!naiRefsHint) {
