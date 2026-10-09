@@ -8421,7 +8421,21 @@ function bindSettingsEvents() {
         // show for gemini, openai, and custom chat-format alike.
         document.getElementById('slay_gemini_params')?.classList.toggle('iig-hidden', !(isGemini || isOpenAI || (isCustom && !isCustomImages)));
 
-        document.getElementById('slay_refs_section')?.classList.toggle('iig-hidden', !supportsRefs);
+        // NovelAI: the slots and saved portraits stay visible (Anna keeps them there), nothing is sent to NovelAI.
+        document.getElementById('slay_refs_section')?.classList.toggle('iig-hidden', !(supportsRefs || isNovelAI));
+        let naiRefsHint = document.getElementById('slay_refs_nai_hint');
+        if (!naiRefsHint) {
+            const refsHead = document.querySelector('#slay_refs_section .iig-refs-h4');
+            if (refsHead) {
+                naiRefsHint = document.createElement('p');
+                naiRefsHint.id = 'slay_refs_nai_hint';
+                naiRefsHint.className = 'hint';
+                naiRefsHint.style.color = '#ff9800';
+                naiRefsHint.textContent = 'NovelAI: портреты здесь только хранятся, в генерацию они не отправляются.';
+                refsHead.insertAdjacentElement('afterend', naiRefsHint);
+            }
+        }
+        if (naiRefsHint) naiRefsHint.classList.toggle('iig-hidden', !isNovelAI);
         document.getElementById('slay_image_context_section')?.classList.toggle('iig-hidden', !supportsRefs);
         document.getElementById('slay_image_context_count_row')?.classList.toggle('iig-hidden', !settings.imageContextEnabled || !supportsRefs);
 
