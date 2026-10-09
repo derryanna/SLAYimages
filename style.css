@@ -3322,6 +3322,12 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .slay-style-modal.iig-nai-lib { max-width: 720px; }
+/* «Каталог»: the artists page in a frame, as tall as the screen allows */
+.iig-nai-catalog-box {
+    background: #0e0e16; border: 1px solid rgba(244,114,182,0.22); border-radius: 18px;
+    width: calc(100% - 16px); max-width: 1400px; height: 94vh; display: flex; flex-direction: column; overflow: hidden;
+}
+.iig-nai-catalog-frame { flex: 1; width: 100%; border: 0; background: #0e0e16; }
 .iig-nai-filters { align-items: center; }
 .iig-nai-search { flex: 1; min-width: 120px; margin: 0; }
 .iig-nai-add, .iig-nai-paste-btn, .iig-nai-img-btn { white-space: nowrap; margin: 0; }

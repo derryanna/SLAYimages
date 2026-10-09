@@ -283,6 +283,7 @@ For the NovelAI API type the «Стиль» row of the prose catalogue is replac
 - Every style belongs to a model (`4.5`, `V5` or «любая»); one style is active **per model**, so a block that switches `"model": "4.5"` / `"v5"` per image gets the right style automatically. Entries are sent verbatim as tags (weights like `1.3::tag::` and groups `1.5::a, b::` are kept whole; nothing is deduplicated inside them; quality tags already present are not repeated by the plugin).
 - The modal: «Стили / Негативы» tabs, search by name and text, click a row to activate it, «Без стиля / Без негатива» rows for an explicit empty value, pencil → inline editor (name, model, tags; autosaved), duplicate, delete, JSON export / import (the SLAY export format or a plain `{"name": "tags"}` map).
 - When the library is empty or the active entry is missing, the house constants are used, so wiped settings never produce bare prompts.
+- «Каталог» opens the artists catalogue page served at `/artists/` of the same site in a frame; its «В SLAY» button posts `{ type: 'slay-style', name, tags }` to the tavern window (same origin only) and the style is added to the library for the current model, no file needed.
 - The settings file is written whole from the open tab — edit the library in one tab at a time.
 
 ### Panel sections

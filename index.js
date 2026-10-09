@@ -4637,6 +4637,7 @@ async function openNaiLibraryModal(initialKind = 'styles') {
           <div class="menu_button iig-nai-add" title="Новая запись"><i class="fa-solid fa-plus"></i> Добавить</div>
           <div class="menu_button iig-nai-paste-btn" title="Вставить пост «📎 Генерация …» или промпт — сцена и персонажи вырежутся сами"><i class="fa-solid fa-paste"></i> Пост</div>
           <label class="menu_button iig-nai-img-btn" title="Картинка с сайта NovelAI (PNG / WebP) — стиль из её промпта"><i class="fa-solid fa-image"></i> Картинка<input type="file" class="iig-nai-img-input" accept="image/png,image/webp,image/jpeg" hidden></label>
+          <div class="menu_button iig-nai-catalog-btn" title="Каталог художников с превью (страница /artists/ этого же сайта); «В SLAY» там кладёт стиль прямо сюда"><i class="fa-solid fa-palette"></i> Каталог</div>
         </div>
         <div class="iig-nai-paste iig-hidden">
           <textarea class="text_pole iig-nai-paste-text" rows="6" placeholder="Вставь пост «📎 Генерация …» или промпт целиком — останутся артисты и теги качества"></textarea>
@@ -4679,7 +4680,7 @@ async function openNaiLibraryModal(initialKind = 'styles') {
 
     const render = () => {
         overlay.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === kind));
-        for (const sel of ['.iig-nai-paste-btn', '.iig-nai-img-btn']) overlay.querySelector(sel)?.classList.toggle('iig-hidden', kind !== 'styles');
+        for (const sel of ['.iig-nai-paste-btn', '.iig-nai-img-btn', '.iig-nai-catalog-btn']) overlay.querySelector(sel)?.classList.toggle('iig-hidden', kind !== 'styles');
         if (kind !== 'styles') overlay.querySelector('.iig-nai-paste')?.classList.add('iig-hidden');
         const all = nl.naiEntries(settings, kind);
         const list = nl.filterNaiEntries(all, query);
@@ -4793,6 +4794,35 @@ async function openNaiLibraryModal(initialKind = 'styles') {
         if (!meta) { toastr.warning('В картинке нет промпта NovelAI (скриншоты и пересжатые картинки его теряют)', 'SLAY Images', { timeOut: 4500 }); return; }
         const r = nl.parseNaiStylePost(meta.prompt);
         addImportedStyle({ ...r, model: meta.model || r.model, name: file.name.replace(/\.[^.]+$/, '').slice(0, 40) });
+    });
+    // «Каталог»: the artists page of this same site in a frame; its «В SLAY» posts { type: 'slay-style', name, tags }
+    // to this window (same origin only) and the style lands in the library like a one-entry import.
+    const onCatalogMessage = (ev) => {
+        if (ev.origin !== location.origin) return;
+        const st = nl.catalogStyleFromMessage(ev.data);
+        if (!st) return;
+        nl.addNaiEntry(settings, 'styles', { ...st, model: nl.naiModelKey(settings.novelaiModel) });
+        persist(); render();
+        toastr.success(`Стиль «${st.name}» добавлен в библиотеку`, 'SLAY Images', { timeOut: 3000 });
+    };
+    overlay.querySelector('.iig-nai-catalog-btn').addEventListener('click', () => {
+        const wrap = document.createElement('div');
+        wrap.className = 'slay-style-overlay iig-nai-catalog';
+        wrap.innerHTML = `
+          <div class="iig-nai-catalog-box">
+            <div class="slay-style-modal-head">
+              <span class="slay-style-modal-title"><i class="fa-solid fa-palette"></i> Каталог художников</span>
+              <div class="slay-style-modal-close menu_button"><i class="fa-solid fa-xmark"></i></div>
+            </div>
+            <iframe class="iig-nai-catalog-frame" src="/artists/" title="Каталог художников"></iframe>
+          </div>`;
+        document.body.appendChild(wrap);
+        window.addEventListener('message', onCatalogMessage);
+        const closeCat = (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } window.removeEventListener('message', onCatalogMessage); wrap.remove(); };
+        wrap.querySelector('.slay-style-modal-close').addEventListener('click', closeCat);
+        const box = wrap.querySelector('.iig-nai-catalog-box');
+        for (const ev of ['click', 'mousedown', 'pointerdown', 'pointerup']) box.addEventListener(ev, e => e.stopPropagation());
+        for (const ev of ['touchstart', 'touchend']) box.addEventListener(ev, e => e.stopPropagation(), { passive: true });
     });
     overlay.querySelector('.iig-nai-export').addEventListener('click', () => {
         const blob = new Blob([JSON.stringify(nl.exportNaiLibrary(settings), null, 2)], { type: 'application/json' });

@@ -395,6 +395,19 @@ export function importNaiLibrary(settings, data, { model = 'any' } = {}) {
     return { styles: styles.length, negatives: negatives.length };
 }
 
+/**
+ * A style posted by the artists catalogue (the /artists/ page opened in a frame from the library modal
+ * sends window.postMessage({ type: 'slay-style', name, tags })) → { name, value }, or null when it is
+ * not such a message. The caller checks the origin; this only checks the shape.
+ */
+export function catalogStyleFromMessage(data) {
+    if (!data || typeof data !== 'object' || data.type !== 'slay-style') return null;
+    const name = String(data.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const value = String(data.tags ?? '').replace(/\s+/g, ' ').trim().slice(0, 4000);
+    if (!name || !value) return null;
+    return { name, value };
+}
+
 // ─────────────────────────── style import: posts and NovelAI images ───────────────────────────
 // A pasted generation post (Telegram «📎 Генерация …» / a prompt from the NovelAI site) or the prompt inside a
 // NovelAI PNG/WebP → a library style: artists + quality tags only, the scene and characters are cut off.

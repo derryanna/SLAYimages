@@ -5,7 +5,7 @@ import {
     normalizeNaiParams, resolveNaiSize, naiCost, enforceFreeTier, NAI_PROFILE_KEYS,
     ensureNaiLibrary, activeNaiStyle, activeNaiStyleTags, activeNaiNegativeText, activeNaiNegativeEntry,
     addNaiEntry, updateNaiEntry, duplicateNaiEntry, removeNaiEntry, setActiveNaiStyle, setActiveNaiNegative,
-    filterNaiEntries, exportNaiLibrary, importNaiLibrary, migrateNaiNegative,
+    filterNaiEntries, exportNaiLibrary, importNaiLibrary, migrateNaiNegative, catalogStyleFromMessage,
     NAI_DEFAULT_STYLE_45, NAI_DEFAULT_STYLE_V5, NAI_DEFAULT_NEGATIVE, NAI_SEED_STYLES,
 } from '../nai-library.js';
 import { NAI_MODEL_45, NAI_MODEL_V5 } from '../nai-comics.js';
@@ -155,4 +155,14 @@ test('export → import round-trips; same ids replace, new ids append; a bare na
     assert.equal(b.naiStyles.find(e => e.id === 'import-f9_test').model, '4.5');
     assert.throws(() => importNaiLibrary(b, '{"nope":1}'));
     assert.throws(() => importNaiLibrary(b, '[]'));
+});
+
+test('catalogStyleFromMessage: only { type: "slay-style", name, tags } with both non-empty becomes a style', () => {
+    assert.deepEqual(catalogStyleFromMessage({ type: 'slay-style', name: '  Мой микс ', tags: '1.2::a::,  b ' }), { name: 'Мой микс', value: '1.2::a::, b' });
+    assert.equal(catalogStyleFromMessage({ type: 'slay-style', name: '', tags: 'a' }), null);
+    assert.equal(catalogStyleFromMessage({ type: 'slay-style', name: 'x', tags: '   ' }), null);
+    assert.equal(catalogStyleFromMessage({ type: 'other', name: 'x', tags: 'a' }), null);
+    assert.equal(catalogStyleFromMessage('{"type":"slay-style"}'), null);
+    assert.equal(catalogStyleFromMessage(null), null);
+    assert.equal(catalogStyleFromMessage({ type: 'slay-style', name: 'n'.repeat(500), tags: 'a' }).name.length, 120);
 });
