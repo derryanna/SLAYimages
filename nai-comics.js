@@ -46,7 +46,8 @@ export const NAI_HOUSE_VIBES = {
 };
 
 // V5 has no vibes; this phrase at the end of the base does the same job there.
-export const NAI_V5_SUFFIX = 'soft painterly shading, faces close and large in frame';
+// No framing words here: «faces close and large in frame» made V5 split poses where the faces are apart into two panels (9 Oct 2026).
+export const NAI_V5_SUFFIX = 'soft painterly shading';
 
 /**
  * Model, vibes and base suffix for one image.

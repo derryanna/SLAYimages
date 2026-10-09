@@ -360,7 +360,7 @@ test('buildNaiPluginBody appends the V5 phrase after the scene, once', () => {
     const body = buildNaiPluginBody(i, { styleTags: 'muted colors', styleSuffix: look.styleSuffix, negative: 'lowres', model: look.model, vibes: look.vibes });
     assert.equal(body.model, NAI_MODEL_V5);
     assert.deepEqual(body.vibes, []);
-    assert.equal(body.prompt, 'muted colors, 1boy, solo, upper body, night, lonely mood, soft painterly shading, faces close and large in frame');
+    assert.equal(body.prompt, 'muted colors, 1boy, solo, upper body, night, lonely mood, soft painterly shading');
     const i45 = parseNaiInstruction({ base: '1boy, 1girl, kitchen', model: '4.5' });
     const look45 = resolveNaiLook(i45, {});
     const body45 = buildNaiPluginBody(i45, { styleTags: 'muted colors', styleSuffix: look45.styleSuffix, negative: 'lowres', model: look45.model, vibes: look45.vibes });
