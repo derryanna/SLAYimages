@@ -46,7 +46,7 @@ export const NAI_HOUSE_VIBES = {
 };
 
 // V5 has no vibes; this phrase at the end of the base does the same job there.
-export const NAI_V5_SUFFIX = 'soft painterly shading, moody low key light, faces close and large in frame';
+export const NAI_V5_SUFFIX = 'soft painterly shading, faces close and large in frame';
 
 /**
  * Model, vibes and base suffix for one image.
