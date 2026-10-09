@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
     normalizeNaiParams, resolveNaiSize, naiCost, enforceFreeTier, NAI_PROFILE_KEYS,
     ensureNaiLibrary, activeNaiStyle, activeNaiStyleTags, activeNaiNegativeText, activeNaiNegativeEntry,
-    addNaiEntry, updateNaiEntry, duplicateNaiEntry, removeNaiEntry, setActiveNaiStyle, setActiveNaiNegative,
+    addNaiEntry, updateNaiEntry, duplicateNaiEntry, removeNaiEntry, setActiveNaiStyle, setActiveNaiNegative, toggleActiveNaiStyle, toggleActiveNaiNegative,
     filterNaiEntries, exportNaiLibrary, importNaiLibrary, migrateNaiNegative, catalogStyleFromMessage,
     NAI_DEFAULT_STYLE_45, NAI_DEFAULT_STYLE_V5, NAI_DEFAULT_NEGATIVE, NAI_SEED_STYLES,
 } from '../nai-library.js';
@@ -167,4 +167,21 @@ test('catalogStyleFromMessage: only { type: "slay-style", name, tags } with both
     assert.equal(catalogStyleFromMessage('{"type":"slay-style"}'), null);
     assert.equal(catalogStyleFromMessage(null), null);
     assert.equal(catalogStyleFromMessage({ type: 'slay-style', name: 'n'.repeat(500), tags: 'a' }).name.length, 120);
+});
+
+test('toggle: a click on an inactive style activates it for its model, a second click switches that model off', () => {
+    const s = {};
+    ensureNaiLibrary(s);
+    const f3 = s.naiStyles.find(e => e.model === '4.5' && e.id !== 'house-45');
+    assert.equal(toggleActiveNaiStyle(s, f3.id, NAI_MODEL_V5), false, 'was inactive → now active');
+    assert.equal(s.naiActiveStyle['4.5'], f3.id);
+    assert.equal(toggleActiveNaiStyle(s, f3.id, NAI_MODEL_V5), true, 'was active → switched off');
+    assert.equal(s.naiActiveStyle['4.5'], '');
+    assert.equal(activeNaiStyleTags(s, NAI_MODEL_45), '', 'off means empty, not the house constant');
+    const v5 = s.naiActiveStyle.v5;
+    assert.ok(v5, 'the other model keeps its style');
+    assert.equal(toggleActiveNaiNegative(s, 'house-neg'), true);
+    assert.equal(s.naiActiveNegative, '');
+    assert.equal(toggleActiveNaiNegative(s, 'house-neg'), false);
+    assert.equal(s.naiActiveNegative, 'house-neg');
 });

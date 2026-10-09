@@ -346,6 +346,25 @@ export function setActiveNaiStyle(settings, id, forModel) {
     return key;
 }
 
+/**
+ * A click on a row: an inactive style becomes active for its model, an active one is switched off
+ * (its slots get the explicit '' pointer, so the house constant does not come back). Returns true when switched off.
+ */
+export function toggleActiveNaiStyle(settings, id, forModel) {
+    const a = settings.naiActiveStyle && typeof settings.naiActiveStyle === 'object' ? settings.naiActiveStyle : {};
+    const slots = ['4.5', 'v5'].filter(k => a[k] === id);
+    if (!slots.length) { setActiveNaiStyle(settings, id, forModel); return false; }
+    settings.naiActiveStyle = a;
+    for (const k of slots) a[k] = '';
+    return true;
+}
+
+export function toggleActiveNaiNegative(settings, id) {
+    if (settings.naiActiveNegative === id) { setActiveNaiNegative(settings, ''); return true; }
+    setActiveNaiNegative(settings, id);
+    return false;
+}
+
 export function setActiveNaiNegative(settings, id) {
     if (id === '' || id == null) { settings.naiActiveNegative = ''; return true; }
     if (!findNaiEntry(settings, 'negatives', id)) return false;

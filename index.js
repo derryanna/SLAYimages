@@ -4672,9 +4672,10 @@ async function openNaiLibraryModal(initialKind = 'styles') {
         if (kind === 'negatives') return settings.naiActiveNegative === e.id ? ['✓'] : [];
         return ['4.5', 'v5'].filter(k => settings.naiActiveStyle?.[k] === e.id).map(k => k === 'v5' ? 'V5' : '4.5');
     };
+    // A click toggles: inactive → active for its model, active → off (explicit «Без стиля» for that model).
     const activate = (id) => {
-        if (kind === 'negatives') nl.setActiveNaiNegative(settings, id);
-        else nl.setActiveNaiStyle(settings, id, settings.novelaiModel);
+        if (kind === 'negatives') nl.toggleActiveNaiNegative(settings, id);
+        else nl.toggleActiveNaiStyle(settings, id, settings.novelaiModel);
         persist(); render();
     };
 
@@ -4698,7 +4699,7 @@ async function openNaiLibraryModal(initialKind = 'styles') {
             const activeBadge = on ? `<span class="iig-nai-badge is-on">активен${kind === 'styles' ? ': ' + slots.join(' + ') : ''}</span>` : '';
             const isEdit = editing === e.id;
             rows.push(`<div class="iig-nai-row ${on ? 'is-active' : ''}" data-id="${esc(e.id)}">
-                <div class="iig-nai-row-main" title="Нажмите, чтобы сделать активным">
+                <div class="iig-nai-row-main" title="Клик включает, повторный клик выключает">
                     <i class="fa-solid ${on ? 'fa-circle-check' : 'fa-circle'} iig-nai-check"></i>
                     <div class="iig-nai-row-text">
                         <div class="iig-nai-row-name">${esc(e.name || '(без имени)')} ${modelBadge} ${activeBadge}</div>
