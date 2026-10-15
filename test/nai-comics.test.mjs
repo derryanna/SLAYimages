@@ -61,7 +61,7 @@ test('old naicom "|" prompt splits into characters and Russian lines become bubb
 });
 
 test('numeric HTML entities in the instruction are decoded', () => {
-    assert.equal(decodeEntities('&#1040;&#1085;&#1085;&#1072; &quot;x&quot;'), 'Анна "x"');
+    assert.equal(decodeEntities('&#1054;&#1083;&#1100;&#1075;&#1072; &quot;x&quot;'), 'Ольга "x"');
     const i = parseNaiInstruction({ base: 'x', bubbles: [{ speaker: 'Ren', text: '&#1055;&#1088;&#1080;&#1074;&#1077;&#1090;' }] });
     assert.equal(i.bubbles[0].text, 'Привет');
 });
