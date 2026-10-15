@@ -38,9 +38,9 @@ export function isNaiV5(model) {
 
 // House vibes for 4.5 (names of .naiv4vibe files on the server; see README).
 // violet = s3 (painterly skin, muted colours), red = s1 (warmth; 0.2 — above that it tints the hair),
-// dan = the Danone panel crop for night/intimate scenes.
+// dan = a panel crop for night/intimate scenes.
 export const NAI_HOUSE_VIBES = {
-    // Picked 8 Oct 2026: the vibe made from the Aurora reference alone (sheet «1 E3, глаза»)
+    // Picked 8 Oct 2026: the vibe made from the heroine reference alone (sheet «1 E3, глаза»)
     day: [{ name: 'aur10', strength: 0.6 }],
     night: [{ name: 'aur10', strength: 0.6 }],
 };
@@ -112,7 +112,7 @@ function normalizeRatio(r) {
     return VALID_RATIOS.includes(s) ? s : null;
 }
 
-// Old naicom block format: "base | boy Kakashi ... Text: Реплика | girl Aurora ...".
+// Old naicom block format: "base | boy NAME ... Text: Реплика | girl NAME ...".
 // Also pulls «quoted» Russian lines out of "NAME has a speech bubble saying «…»".
 function parseLegacyPrompt(prompt) {
     const bubbles = [];

@@ -246,9 +246,9 @@ This fork ([derryanna/SLAYimages](https://github.com/derryanna/SLAYimages)) trac
   ```json
   {"base": "1boy, 1girl, comic, 4 panels, one large panel on top, three small close-up panels at the bottom, speech bubble, blank speech bubble, upper body, bedroom, dim lighting",
    "characters": [
-     {"name": "Kakashi", "prompt": "boy, adult, messy hair, silver hair, grey eyes, scar on face, …", "uc": "mask, headband, glasses", "center": {"x": 0.3, "y": 0.3}},
-     {"name": "Aurora",  "prompt": "girl, adult, very long hair, wavy hair, blonde hair, green eyes, …", "uc": "huge breasts, hourglass", "center": {"x": 0.7, "y": 0.3}}],
-   "bubbles": [{"speaker": "Kakashi", "text": "Ты отсюда никуда не уйдешь..."}],
+     {"name": "Rin",  "prompt": "boy, adult, messy hair, black hair, grey eyes, …", "uc": "glasses, hat", "center": {"x": 0.3, "y": 0.3}},
+     {"name": "Mira", "prompt": "girl, adult, long hair, brown hair, green eyes, …", "uc": "hat, scarf", "center": {"x": 0.7, "y": 0.3}}],
+   "bubbles": [{"speaker": "Rin", "text": "Доброе утро."}],
    "aspect_ratio": "2:3", "image_size": "1K"}
   ```
 
