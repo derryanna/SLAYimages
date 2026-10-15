@@ -16,11 +16,11 @@ test('structured instruction is normalised', () => {
     const d = {
         base: '1boy, 1girl, comic, 4 panels, bedroom, warm lighting',
         characters: [
-            { name: 'Kakashi', prompt: 'boy, silver hair, grey eyes', uc: 'mask, headband', center: { x: 0.3, y: 0.5 } },
-            { name: 'Aurora', prompt: 'girl, blonde hair, green eyes', center: { x: '0.7', y: '0.5' } },
+            { name: 'Ren', prompt: 'boy, silver hair, grey eyes', uc: 'mask, headband', center: { x: 0.3, y: 0.5 } },
+            { name: 'Mira', prompt: 'girl, blonde hair, green eyes', center: { x: '0.7', y: '0.5' } },
             { name: 'Nobody', prompt: '' },
         ],
-        bubbles: [{ speaker: 'Kakashi', text: 'Ты отсюда никуда не уйдешь...' }, { speaker: 'Aurora', text: '' }],
+        bubbles: [{ speaker: 'Ren', text: 'Мы завтра пойдем на вокзал...' }, { speaker: 'Mira', text: '' }],
         aspect_ratio: '2:3',
     };
     const i = parseNaiInstruction(d);
@@ -31,7 +31,7 @@ test('structured instruction is normalised', () => {
     assert.equal(i.characters.length, 2);
     assert.deepEqual(i.characters[1].center, { x: 0.7, y: 0.5 });
     assert.equal(i.characters[0].uc, 'mask, headband');
-    assert.deepEqual(i.bubbles, [{ speaker: 'Kakashi', text: 'Ты отсюда никуда не уйдешь...' }]);
+    assert.deepEqual(i.bubbles, [{ speaker: 'Ren', text: 'Мы завтра пойдем на вокзал...' }]);
 });
 
 test('plain prompt stays plain; invalid ratio dropped', () => {
@@ -46,23 +46,23 @@ test('plain prompt stays plain; invalid ratio dropped', () => {
 
 test('old naicom "|" prompt splits into characters and Russian lines become bubbles', () => {
     const prompt = '1 boy, 1 girl, comic, 3 panels. Hospital corridor. Elena has a speech bubble saying «Мы у тебя в долгу», with the tail pointing to Elena. '
-        + '| boy Kakashi. Handsome adult male, messy silver hair, grey eyes. Text: Я подожду '
-        + '| girl Aurora. Long wavy blonde hair, green eyes.';
+        + '| boy Ren. Handsome adult male, messy silver hair, grey eyes. Text: Я подожду '
+        + '| girl Mira. Long wavy blonde hair, green eyes.';
     const i = parseNaiInstruction({ prompt });
     assert.equal(i.structured, false);
     assert.equal(i.comic, true);
     assert.ok(!/[Ѐ-ӿ]/.test(i.base), 'no Cyrillic in base');
     assert.ok(i.base.includes('Elena has an empty speech bubble'));
     assert.equal(i.characters.length, 2);
-    assert.equal(i.characters[0].name, 'Kakashi');
+    assert.equal(i.characters[0].name, 'Ren');
     assert.ok(!/Text:/.test(i.characters[0].prompt));
     assert.ok(!/[Ѐ-ӿ]/.test(i.characters[0].prompt));
-    assert.deepEqual(i.bubbles, [{ speaker: 'Elena', text: 'Мы у тебя в долгу' }, { speaker: 'Kakashi', text: 'Я подожду' }]);
+    assert.deepEqual(i.bubbles, [{ speaker: 'Elena', text: 'Мы у тебя в долгу' }, { speaker: 'Ren', text: 'Я подожду' }]);
 });
 
 test('numeric HTML entities in the instruction are decoded', () => {
     assert.equal(decodeEntities('&#1040;&#1085;&#1085;&#1072; &quot;x&quot;'), 'Анна "x"');
-    const i = parseNaiInstruction({ base: 'x', bubbles: [{ speaker: 'Kakashi', text: '&#1055;&#1088;&#1080;&#1074;&#1077;&#1090;' }] });
+    const i = parseNaiInstruction({ base: 'x', bubbles: [{ speaker: 'Ren', text: '&#1055;&#1088;&#1080;&#1074;&#1077;&#1090;' }] });
     assert.equal(i.bubbles[0].text, 'Привет');
 });
 
@@ -119,13 +119,13 @@ test('buildNaiPluginBody carries characters with centers only when given', () =>
 
 test('wrapText wraps by words and breaks overlong words', () => {
     const m = (t) => t.length * 10;
-    assert.deepEqual(wrapText('Ты отсюда никуда не уйдешь', 100, m), ['Ты отсюда', 'никуда не', 'уйдешь']);
+    assert.deepEqual(wrapText('Мы завтра пойдем на вокзал', 100, m), ['Мы завтра', 'пойдем на', 'вокзал']);
     assert.deepEqual(wrapText('абвгдежзиклмн', 50, m), ['абвгд', 'ежзик', 'лмн']);
     assert.deepEqual(wrapText('', 50, m), []);
 });
 
 test('fitText picks the largest size that fits, or null', () => {
-    const fit = fitText('Глубже вбивай, шкаф...', 120, 60, measure, { minSize: 10, maxSize: 40 });
+    const fit = fitText('Чайник уже закипел...', 120, 60, measure, { minSize: 10, maxSize: 40 });
     assert.ok(fit);
     assert.ok(fit.fontSize >= 10 && fit.fontSize <= 40);
     for (const l of fit.lines) assert.ok(measure(l, fit.fontSize) <= 120);
@@ -189,12 +189,12 @@ const regionAt = (cx, cy, w, h) => ({ x: cx - w / 2, y: cy - h / 2, w, h, cx, cy
 
 test('layoutBubbles assigns detected bubbles to speakers by proximity and fits the text', () => {
     const regions = [regionAt(0.2, 0.12, 0.28, 0.14), regionAt(0.82, 0.14, 0.26, 0.13)];
-    const characters = [{ name: 'Kakashi', center: { x: 0.3, y: 0.5 } }, { name: 'Aurora', center: { x: 0.7, y: 0.5 } }];
-    const bubbles = [{ speaker: 'Aurora', text: 'Глубже вбивай, шкаф...' }, { speaker: 'Kakashi', text: 'Ты отсюда никуда не уйдешь...' }];
+    const characters = [{ name: 'Ren', center: { x: 0.3, y: 0.5 } }, { name: 'Mira', center: { x: 0.7, y: 0.5 } }];
+    const bubbles = [{ speaker: 'Mira', text: 'Чайник уже закипел...' }, { speaker: 'Ren', text: 'Мы завтра пойдем на вокзал...' }];
     const pl = layoutBubbles({ bubbles, characters, regions, width: W, height: H, measure });
     assert.equal(pl.length, 2);
     assert.equal(pl[0].kind, 'region');
-    assert.equal(pl[0].region, regions[1], 'Aurora (right) gets the right bubble');
+    assert.equal(pl[0].region, regions[1], 'Mira (right) gets the right bubble');
     assert.equal(pl[1].kind, 'region');
     assert.equal(pl[1].region, regions[0]);
     for (const p of pl) {
@@ -205,8 +205,8 @@ test('layoutBubbles assigns detected bubbles to speakers by proximity and fits t
 });
 
 test('layoutBubbles falls back to a drawn bubble near the speaker with a tail, inside the image, no overlap', () => {
-    const characters = [{ name: 'Kakashi', center: { x: 0.3, y: 0.5 } }, { name: 'Aurora', center: { x: 0.3, y: 0.5 } }];
-    const bubbles = [{ speaker: 'Kakashi', text: 'Ты отсюда никуда не уйдешь...' }, { speaker: 'Aurora', text: 'Глубже вбивай, шкаф...' }];
+    const characters = [{ name: 'Ren', center: { x: 0.3, y: 0.5 } }, { name: 'Mira', center: { x: 0.3, y: 0.5 } }];
+    const bubbles = [{ speaker: 'Ren', text: 'Мы завтра пойдем на вокзал...' }, { speaker: 'Mira', text: 'Чайник уже закипел...' }];
     const pl = layoutBubbles({ bubbles, characters, regions: [], width: W, height: H, measure });
     assert.equal(pl.length, 2);
     for (const p of pl) {
@@ -244,7 +244,7 @@ test('renderBubbles draws every line of text and a shape per drawn bubble', () =
     const calls = [];
     const ctx = new Proxy({}, { get: (_, name) => (...args) => { calls.push([name, args]); } });
     const pl = layoutBubbles({
-        bubbles: [{ speaker: 'K', text: 'Ты отсюда никуда не уйдешь' }], characters: [{ name: 'K', center: { x: 0.3, y: 0.5 } }],
+        bubbles: [{ speaker: 'K', text: 'Мы завтра пойдем на вокзал' }], characters: [{ name: 'K', center: { x: 0.3, y: 0.5 } }],
         regions: [], width: W, height: H, measure,
     });
     renderBubbles(ctx, pl, { width: W, height: H });
