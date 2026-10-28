@@ -3357,6 +3357,7 @@
 .iig-nai-row-acts { display: flex; gap: 4px; align-self: start; }
 .iig-nai-row-acts .menu_button { padding: 4px 8px; margin: 0; }
 .iig-nai-row-acts .menu_button.is-on { border-color: #f472b6; color: #f472b6; }
+.iig-nai-row-acts .iig-nai-fav.is-on { border-color: #facc15; color: #facc15; }
 .iig-nai-editor { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; padding-top: 4px; border-top: 1px dashed rgba(255,255,255,0.08); }
 .iig-nai-textarea { width: 100%; box-sizing: border-box; font-size: 0.85em; resize: vertical; }
 .iig-nai-foot { padding: 6px 14px 10px; margin: 0; flex-shrink: 0; font-size: 0.72em; opacity: 0.55; }

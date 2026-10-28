@@ -5,7 +5,7 @@ import {
     normalizeNaiParams, resolveNaiSize, naiCost, enforceFreeTier, NAI_PROFILE_KEYS,
     ensureNaiLibrary, activeNaiStyle, activeNaiStyleTags, activeNaiNegativeText, activeNaiNegativeEntry,
     addNaiEntry, updateNaiEntry, duplicateNaiEntry, removeNaiEntry, setActiveNaiStyle, setActiveNaiNegative, toggleActiveNaiStyle, toggleActiveNaiNegative,
-    filterNaiEntries, exportNaiLibrary, importNaiLibrary, migrateNaiNegative, catalogStyleFromMessage,
+    filterNaiEntries, favFirst, exportNaiLibrary, importNaiLibrary, migrateNaiNegative, catalogStyleFromMessage,
     NAI_DEFAULT_STYLE_45, NAI_DEFAULT_STYLE_V5, NAI_DEFAULT_NEGATIVE, NAI_SEED_STYLES,
 } from '../nai-library.js';
 import { NAI_MODEL_45, NAI_MODEL_V5 } from '../nai-comics.js';
@@ -184,4 +184,20 @@ test('toggle: a click on an inactive style activates it for its model, a second 
     assert.equal(s.naiActiveNegative, '');
     assert.equal(toggleActiveNaiNegative(s, 'house-neg'), false);
     assert.equal(s.naiActiveNegative, 'house-neg');
+});
+
+test('favourite styles: ★ survives the load clean-up, goes first, is not copied by «дубликат»', () => {
+    const s = {};
+    ensureNaiLibrary(s);
+    const ids = s.naiStyles.map(e => e.id);
+    const last = ids[ids.length - 1];
+    updateNaiEntry(s, 'styles', last, { fav: true });
+    assert.deepEqual(favFirst(s.naiStyles).map(e => e.id), [last, ...ids.slice(0, -1)]);
+    ensureNaiLibrary(s);
+    assert.equal(s.naiStyles.find(e => e.id === last).fav, true, 'kept after the clean-up on load');
+    assert.equal(duplicateNaiEntry(s, 'styles', last).fav, undefined);
+    assert.equal(exportNaiLibrary(s).styles.find(e => e.id === last).fav, true);
+    updateNaiEntry(s, 'styles', last, { fav: false });
+    assert.equal('fav' in s.naiStyles.find(e => e.id === last), false);
+    assert.deepEqual(favFirst(s.naiStyles).map(e => e.id).slice(0, 2), ids.slice(0, 2));
 });

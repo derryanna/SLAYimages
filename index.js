@@ -4684,7 +4684,7 @@ async function openNaiLibraryModal(initialKind = 'styles') {
         for (const sel of ['.iig-nai-paste-btn', '.iig-nai-img-btn', '.iig-nai-catalog-btn']) overlay.querySelector(sel)?.classList.toggle('iig-hidden', kind !== 'styles');
         if (kind !== 'styles') overlay.querySelector('.iig-nai-paste')?.classList.add('iig-hidden');
         const all = nl.naiEntries(settings, kind);
-        const list = nl.filterNaiEntries(all, query);
+        const list = nl.favFirst(nl.filterNaiEntries(all, query));
         const curKey = nl.naiModelKey(settings.novelaiModel);
         const noneOn = kind === 'negatives' ? settings.naiActiveNegative === '' : (settings.naiActiveStyle?.['4.5'] === '' && settings.naiActiveStyle?.v5 === '');
         const rows = [];
@@ -4707,6 +4707,7 @@ async function openNaiLibraryModal(initialKind = 'styles') {
                     </div>
                 </div>
                 <div class="iig-nai-row-acts">
+                    <div class="menu_button iig-nai-fav ${e.fav ? 'is-on' : ''}" data-act="fav" title="${e.fav ? 'Убрать из любимых' : 'В любимые: будет наверху списка'}"><i class="fa-${e.fav ? 'solid' : 'regular'} fa-star"></i></div>
                     <div class="menu_button ${isEdit ? 'is-on' : ''}" data-act="edit" title="Редактировать"><i class="fa-solid fa-pen"></i></div>
                     <div class="menu_button" data-act="dup" title="Дубликат"><i class="fa-solid fa-clone"></i></div>
                     <div class="menu_button" data-act="del" title="Удалить"><i class="fa-solid fa-trash-can"></i></div>
@@ -4733,6 +4734,7 @@ async function openNaiLibraryModal(initialKind = 'styles') {
             activate(id);
             return;
         }
+        if (act === 'fav') { const en = nl.findNaiEntry(settings, kind, id); nl.updateNaiEntry(settings, kind, id, { fav: !en?.fav }); persist(); render(); return; }
         if (act === 'edit') { editing = editing === id ? null : id; render(); if (editing) listEl.querySelector(`[data-id="${CSS.escape(id)}"] [data-f="name"]`)?.focus(); return; }
         if (act === 'dup') { const c = nl.duplicateNaiEntry(settings, kind, id); editing = c?.id || null; persist(); render(); return; }
         if (act === 'del') {

@@ -184,6 +184,7 @@ function cleanEntry(e, kind) {
         value: String(e.value ?? '').trim(),
     };
     if (kind === 'styles') out.model = ['4.5', 'v5', 'any'].includes(e.model) ? e.model : 'any';
+    if (e.fav === true) out.fav = true;
     return out;
 }
 
@@ -280,6 +281,11 @@ export function filterNaiEntries(list, query) {
     return list.filter(e => e.name.toLowerCase().includes(q) || e.value.toLowerCase().includes(q));
 }
 
+/** Favourites (★) first, otherwise the library order stays. */
+export function favFirst(list) {
+    return [...list.filter(e => e.fav), ...list.filter(e => !e.fav)];
+}
+
 // ─────────────────────────── library: mutations ───────────────────────────
 
 export function addNaiEntry(settings, kind, data = {}) {
@@ -295,6 +301,7 @@ export function updateNaiEntry(settings, kind, id, patch = {}) {
     if (!entry) return null;
     if (patch.name !== undefined) entry.name = String(patch.name).trim();
     if (patch.value !== undefined) entry.value = String(patch.value).trim();
+    if (patch.fav !== undefined) { if (patch.fav) entry.fav = true; else delete entry.fav; }
     if (kind === 'styles' && patch.model !== undefined) {
         entry.model = ['4.5', 'v5', 'any'].includes(patch.model) ? patch.model : 'any';
         // A style active for a model it no longer serves is dropped from that slot.
@@ -310,6 +317,7 @@ export function duplicateNaiEntry(settings, kind, id) {
     if (!src) return null;
     const list = settings[listKey(kind)];
     const copy = { ...src, id: newNaiId(kind === 'negatives' ? 'neg' : 'sty'), name: `${src.name} (копия)` };
+    delete copy.fav;
     list.splice(list.indexOf(src) + 1, 0, copy);
     return copy;
 }
