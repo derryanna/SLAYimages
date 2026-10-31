@@ -140,6 +140,28 @@ test('cfg_rescale and skip_cfg_above_sigma pass through; V5 drops noise_schedule
     assert.equal(buildGenerateRequest({ prompt: 'x', model: 'nai-diffusion-4-5-full', skip_cfg_above_sigma: 0 }).parameters.skip_cfg_above_sigma, undefined, '0 = off');
 });
 
+test('Medium Effort model: steps / sampler / CFG rescale pinned to the site values, V5 fields dropped, the rest kept', () => {
+    const r = buildGenerateRequest({
+        prompt: 'x', negative_prompt: 'lowres', model: 'nai-diffusion-5-full-medium',
+        steps: 28, sampler: 'k_dpmpp_2m', cfg_rescale: 0.5, scale: 3.5, scheduler: 'native', skip_cfg_above_sigma: 19,
+        characters: [{ prompt: 'girl', uc: 'lipstick' }],
+    });
+    assert.equal(r.model, 'nai-diffusion-5-full-medium');
+    const p = r.parameters;
+    assert.equal(p.steps, 14);
+    assert.equal(p.sampler, 'k_euler_ancestral');
+    assert.equal(p.cfg_rescale, 0);
+    assert.equal(p.scale, 3.5, 'CFG is the caller\'s');
+    assert.equal(p.noise_schedule, undefined);
+    assert.equal(p.skip_cfg_above_sigma, undefined);
+    assert.equal(p.negative_prompt, 'lowres', 'the negative is still sent');
+    assert.equal(p.v4_negative_prompt.caption.char_captions[0].char_caption, 'lipstick', 'character negatives are still sent');
+    // Even with Anlas allowed the pins hold (the site has no 50-step Medium).
+    assert.equal(buildGenerateRequest({ prompt: 'x', model: 'nai-diffusion-5-full-medium', steps: 50, allow_anlas: true }).parameters.steps, 14);
+    // V5 Full is not touched.
+    assert.equal(buildGenerateRequest({ prompt: 'x', model: 'nai-diffusion-5-full', steps: 28, sampler: 'k_dpmpp_2m' }).parameters.sampler, 'k_dpmpp_2m');
+});
+
 test('allow_anlas lifts the free-tier clamp to 3 MP / 50 steps', () => {
     const p = buildGenerateRequest({ prompt: 'x', steps: 40, width: 1536, height: 1536, allow_anlas: true }).parameters;
     assert.equal(p.steps, 40);

@@ -19,12 +19,16 @@ const CYRILLIC_RE = /[Ѐ-ӿԀ-ԯ]+/g;
 
 export const NAI_MODEL_45 = 'nai-diffusion-4-5-full';
 export const NAI_MODEL_V5 = 'nai-diffusion-5-full';
+// «Medium Effort» on the NovelAI site = a distilled V5 Full under its own model id (the site swaps the id, it is not a request field).
+export const NAI_MODEL_V5_MEDIUM = 'nai-diffusion-5-full-medium';
 
 // What the block may write into "model" (or "look"). Anything else → null → the UI setting wins.
 const MODEL_ALIASES = {
     '4.5': NAI_MODEL_45, 'v4.5': NAI_MODEL_45, '45': NAI_MODEL_45, 'v45': NAI_MODEL_45, 'hot': NAI_MODEL_45,
     'nai-diffusion-4-5-full': NAI_MODEL_45, 'nai-diffusion-4-5-curated': 'nai-diffusion-4-5-curated',
     'v5': NAI_MODEL_V5, '5': NAI_MODEL_V5, 'clean': NAI_MODEL_V5, 'nai-diffusion-5-full': NAI_MODEL_V5,
+    'medium': NAI_MODEL_V5_MEDIUM, 'v5 medium': NAI_MODEL_V5_MEDIUM, 'v5-medium': NAI_MODEL_V5_MEDIUM, 'v5m': NAI_MODEL_V5_MEDIUM,
+    'nai-diffusion-5-full-medium': NAI_MODEL_V5_MEDIUM,
 };
 
 export function normalizeNaiModel(v) {
@@ -34,6 +38,19 @@ export function normalizeNaiModel(v) {
 
 export function isNaiV5(model) {
     return /^nai-diffusion-5/.test(String(model || ''));
+}
+
+export function isNaiV5Medium(model) {
+    return String(model || '') === NAI_MODEL_V5_MEDIUM;
+}
+
+// What the NovelAI site pins while Medium Effort is on: 14 steps, Euler Ancestral, no CFG rescale.
+// CFG and the size stay the user's. The server plugin applies the same pins, so no caller can send anything else.
+export const NAI_MEDIUM_FIXED = Object.freeze({ steps: 14, sampler: 'k_euler_ancestral', cfg_rescale: 0 });
+
+/** The pinned knobs for a model ({ steps, sampler, cfg_rescale }), or null when the model has none. */
+export function naiFixedParams(model) {
+    return isNaiV5Medium(model) ? { ...NAI_MEDIUM_FIXED } : null;
 }
 
 // House vibes for 4.5 (names of .naiv4vibe files on the server; see README).

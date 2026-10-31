@@ -22,6 +22,20 @@ test('normalizeNaiParams: defaults for missing, clamps and snaps the rest', () =
     assert.equal(normalizeNaiParams({ novelaiSeed: '' }).seed, -1);
 });
 
+test('normalizeNaiParams: Medium Effort pins steps / sampler / CFG rescale, the other knobs and the settings stay', () => {
+    const s = { novelaiModel: 'nai-diffusion-5-full-medium', novelaiSteps: 30, novelaiSampler: 'k_dpmpp_2m', novelaiCfgRescale: 0.4, novelaiCfgScale: 3.5, novelaiWidth: 1024, novelaiHeight: 1536 };
+    const p = normalizeNaiParams(s);
+    assert.equal(p.steps, 14); assert.equal(p.sampler, 'k_euler_ancestral'); assert.equal(p.cfg_rescale, 0);
+    assert.equal(p.scale, 3.5); assert.equal(p.width, 1024); assert.equal(p.height, 1536);
+    assert.equal(s.novelaiSteps, 30, 'settings untouched');
+    // The model argument wins over the settings model (a block that switches the model per image).
+    const q = normalizeNaiParams({ ...s, novelaiModel: NAI_MODEL_V5 }, 'nai-diffusion-5-full-medium');
+    assert.equal(q.steps, 14);
+    const r = normalizeNaiParams(s, NAI_MODEL_V5);
+    assert.equal(r.steps, 30); assert.equal(r.sampler, 'k_dpmpp_2m'); assert.equal(r.cfg_rescale, 0.4);
+    assert.equal(naiCost({ width: 832, height: 1216, steps: p.steps }).free, true, '14 steps at a normal size is free on Opus');
+});
+
 test('resolveNaiSize: auto follows the block ratio, presets are literal, custom reads W×H', () => {
     assert.deepEqual(resolveNaiSize({ novelaiAspectRatio: 'auto' }, '2:3'), [832, 1216]);
     assert.deepEqual(resolveNaiSize({ novelaiAspectRatio: 'auto' }, null, '16:9'), [1216, 832]);

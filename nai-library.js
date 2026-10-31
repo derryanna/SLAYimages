@@ -5,7 +5,9 @@
 // style / negative entries with one active style per model. index.js imports
 // this file lazily; node unit tests import it directly.
 
-import { isNaiV5 } from './nai-comics.js';
+import { isNaiV5, naiFixedParams } from './nai-comics.js';
+
+export { isNaiV5Medium, naiFixedParams, NAI_MEDIUM_FIXED } from './nai-comics.js';
 
 // ─────────────────────────── parameter tables ───────────────────────────
 
@@ -77,8 +79,12 @@ function snap(n, f) {
     return v;
 }
 
-/** Numeric knobs read from the settings, clamped to their ranges; invalid → default. */
-export function normalizeNaiParams(settings = {}) {
+/**
+ * Numeric knobs read from the settings, clamped to their ranges; invalid → default.
+ * `model` (default: the settings model) may pin some of them — Medium Effort fixes steps / sampler / CFG rescale
+ * the way the NovelAI site does; the stored settings are left untouched so the other models keep their values.
+ */
+export function normalizeNaiParams(settings = {}, model = settings.novelaiModel) {
     const out = {};
     for (const f of NAI_NUMERIC_FIELDS) {
         const raw = settings[f.key];
@@ -87,6 +93,8 @@ export function normalizeNaiParams(settings = {}) {
     out.sampler = Object.hasOwn(NAI_SAMPLERS, settings.novelaiSampler) ? settings.novelaiSampler : 'k_euler_ancestral';
     out.scheduler = NAI_NOISE_SCHEDULES.includes(settings.novelaiNoiseSchedule) ? settings.novelaiNoiseSchedule : 'karras';
     out.allowAnlas = settings.novelaiAllowAnlas === true;
+    const fixed = naiFixedParams(model);
+    if (fixed) Object.assign(out, fixed);
     return out;
 }
 

@@ -4555,8 +4555,12 @@ async function renderNovelaiVibes() {
 async function updateNaiKnobsUI() {
     const settings = getSettings();
     const v5 = /^nai-diffusion-5/.test(settings.novelaiModel || '');
+    const medium = settings.novelaiModel === 'nai-diffusion-5-full-medium';
     document.getElementById('slay_novelai_schedule_row')?.classList.toggle('iig-hidden', v5);
     document.getElementById('slay_novelai_skipcfg_row')?.classList.toggle('iig-hidden', v5);
+    // Medium Effort pins steps / sampler / CFG rescale: hide the knobs and say so (the stored values survive for the other models).
+    for (const id of ['slay_novelai_steps_row', 'slay_novelai_sampler_row', 'slay_novelai_cfg_rescale_row']) document.getElementById(id)?.classList.toggle('iig-hidden', medium);
+    document.getElementById('slay_novelai_medium_hint')?.classList.toggle('iig-hidden', !medium);
     document.getElementById('slay_novelai_custom_size_row')?.classList.toggle('iig-hidden', settings.novelaiAspectRatio !== 'custom');
     let nl;
     try { nl = await loadNaiLibrary(); } catch (e) {
@@ -4938,18 +4942,9 @@ async function generateImageNovelAI(prompt, style, options = {}) {
     const instr = nc.parseNaiInstruction(options.instruction || { prompt });
     const nl = await loadNaiLibrary();
     nl.ensureNaiLibrary(settings);
-    const params = nl.normalizeNaiParams(settings);
-    // Size: preset from the panel; 'auto' = the free size closest to the block's ratio.
-    const [w0, h0] = nl.resolveNaiSize(settings, instr.aspectRatio, options.aspectRatio || '1:1');
-    // Free-tier guard in the UI (the plugin clamps too unless allow_anlas is sent).
-    const tier = nl.enforceFreeTier(w0, h0, params.steps, params.allowAnlas);
-    const { width, height } = tier;
-    if (tier.clamped) iigLog('WARN', `NovelAI: ${w0}x${h0} / ${params.steps} шагов ужато до бесплатного лимита (${width}x${height} / ${tier.steps}); поставьте «Разрешить Anlas», чтобы снять ограничение`);
-    // Negative: the active library entry (the house negative by default — a blank negative made images visibly cheaper).
-    const negative = nl.activeNaiNegativeText(settings);
     // Плагин nai-vibe умеет вайбы, теги качества и персонажные поля V4; без него — родной эндпоинт ST
     const viaPlugin = await novelaiPluginAvailable();
-    // Модель на каждую картинку: блок пишет "model": "4.5" | "v5" — иначе настройка UI.
+    // Модель на каждую картинку: блок пишет "model": "4.5" | "v5" | "medium" — иначе настройка UI.
     // V5: вайбы выключены + фраза в конец base. 4.5: галочки UI, а если ни одной — домашний набор (ночь: violet+dan).
     const uiVibes = (settings.novelaiVibes || []).filter(v => v.enabled).map(v => ({ name: v.name, strength: v.strength }));
     const look = nc.resolveNaiLook(instr, {
@@ -4959,6 +4954,16 @@ async function generateImageNovelAI(prompt, style, options = {}) {
         serverVibes: viaPlugin ? naiServerVibeNames : null,
     });
     const model = look.model;
+    // Knobs for THIS image's model: Medium Effort pins steps / sampler / CFG rescale (the stored settings stay as they are).
+    const params = nl.normalizeNaiParams(settings, model);
+    // Size: preset from the panel; 'auto' = the free size closest to the block's ratio.
+    const [w0, h0] = nl.resolveNaiSize(settings, instr.aspectRatio, options.aspectRatio || '1:1');
+    // Free-tier guard in the UI (the plugin clamps too unless allow_anlas is sent).
+    const tier = nl.enforceFreeTier(w0, h0, params.steps, params.allowAnlas);
+    const { width, height } = tier;
+    if (tier.clamped) iigLog('WARN', `NovelAI: ${w0}x${h0} / ${params.steps} шагов ужато до бесплатного лимита (${width}x${height} / ${tier.steps}); поставьте «Разрешить Anlas», чтобы снять ограничение`);
+    // Negative: the active library entry (the house negative by default — a blank negative made images visibly cheaper).
+    const negative = nl.activeNaiNegativeText(settings);
     // Style: the library entry active for THIS image's model, sent verbatim (library entries are tags already).
     // The prose catalogue («[STYLE: … Avoid: …]») stays for the other APIs.
     const styleEntry = nl.activeNaiStyle(settings, model);
@@ -6995,7 +7000,7 @@ function createSettingsUI() {
                     <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="slay_naistera_model_row"><label>Модель Naistera</label><select id="slay_naistera_model" class="flex1"><option value="grok" ${normalizeNaisteraModel(settings.naisteraModel) === 'grok' ? 'selected' : ''}>Grok</option><option value="nano banana" ${normalizeNaisteraModel(settings.naisteraModel) === 'nano banana' ? 'selected' : ''}>Nano Banana</option><option value="grok-pro" ${normalizeNaisteraModel(settings.naisteraModel) === 'grok-pro' ? 'selected' : ''}>Grok Pro</option><option value="novelai" ${normalizeNaisteraModel(settings.naisteraModel) === 'novelai' ? 'selected' : ''}>NovelAI</option></select></div>
                     <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="slay_naistera_aspect_row"><label>Соотношение</label><select id="slay_naistera_aspect_ratio" class="flex1"><option value="auto" ${(settings.naisteraAspectRatio || 'auto') === 'auto' ? 'selected' : ''}>Из промпта</option><option value="1:1" ${settings.naisteraAspectRatio === '1:1' ? 'selected' : ''}>1:1</option><option value="3:2" ${settings.naisteraAspectRatio === '3:2' ? 'selected' : ''}>3:2</option><option value="2:3" ${settings.naisteraAspectRatio === '2:3' ? 'selected' : ''}>2:3</option></select></div>
                     <div id="slay_novelai_params" class="${settings.apiType === 'novelai' ? '' : 'iig-hidden'}">
-                    <div class="flex-row" id="slay_novelai_model_row"><label>Модель NovelAI</label><select id="slay_novelai_model" class="flex1"><option value="nai-diffusion-5-full" ${(settings.novelaiModel || 'nai-diffusion-5-full') === 'nai-diffusion-5-full' ? 'selected' : ''}>NAI Diffusion V5</option><option value="nai-diffusion-4-5-full" ${settings.novelaiModel === 'nai-diffusion-4-5-full' ? 'selected' : ''}>NAI Diffusion 4.5 Full</option><option value="nai-diffusion-4-5-curated" ${settings.novelaiModel === 'nai-diffusion-4-5-curated' ? 'selected' : ''}>NAI Diffusion 4.5 Curated</option><option value="nai-diffusion-4-full" ${settings.novelaiModel === 'nai-diffusion-4-full' ? 'selected' : ''}>NAI Diffusion 4 Full</option><option value="nai-diffusion-3" ${settings.novelaiModel === 'nai-diffusion-3' ? 'selected' : ''}>NAI Diffusion 3 (Anime V3)</option></select></div>
+                    <div class="flex-row" id="slay_novelai_model_row"><label>Модель NovelAI</label><select id="slay_novelai_model" class="flex1"><option value="nai-diffusion-5-full" ${(settings.novelaiModel || 'nai-diffusion-5-full') === 'nai-diffusion-5-full' ? 'selected' : ''}>NAI Diffusion V5</option><option value="nai-diffusion-5-full-medium" ${settings.novelaiModel === 'nai-diffusion-5-full-medium' ? 'selected' : ''}>NAI Diffusion V5 · Medium Effort (14 шагов)</option><option value="nai-diffusion-4-5-full" ${settings.novelaiModel === 'nai-diffusion-4-5-full' ? 'selected' : ''}>NAI Diffusion 4.5 Full</option><option value="nai-diffusion-4-5-curated" ${settings.novelaiModel === 'nai-diffusion-4-5-curated' ? 'selected' : ''}>NAI Diffusion 4.5 Curated</option><option value="nai-diffusion-4-full" ${settings.novelaiModel === 'nai-diffusion-4-full' ? 'selected' : ''}>NAI Diffusion 4 Full</option><option value="nai-diffusion-3" ${settings.novelaiModel === 'nai-diffusion-3' ? 'selected' : ''}>NAI Diffusion 3 (Anime V3)</option></select></div>
                     <label class="checkbox_label" title="Блок naicom пишет &quot;model&quot;: 4.5 / v5 для каждой картинки; выключено — всегда модель выше"><input type="checkbox" id="slay_novelai_model_from_block" ${settings.novelaiModelFromBlock === true ? 'checked' : ''}><span>Модель выбирает блок (иначе всегда эта)</span></label>
                     <div class="flex-row" id="slay_novelai_aspect_row"><label>Размер</label><select id="slay_novelai_aspect_ratio" class="flex1">${NAI_SIZE_OPTIONS.map(o => `<option value="${o.v}" ${(settings.novelaiAspectRatio || 'auto') === o.v ? 'selected' : ''}>${o.l}</option>`).join('')}</select></div>
                     <div class="flex-row ${settings.novelaiAspectRatio === 'custom' ? '' : 'iig-hidden'}" id="slay_novelai_custom_size_row"><label>Своё W × H</label><div class="flex1" style="display:flex;gap:6px;align-items:center;"><input type="number" id="slay_novelai_width" class="text_pole flex1" value="${Number(settings.novelaiWidth) || 832}" min="64" max="2048" step="64"><span>×</span><input type="number" id="slay_novelai_height" class="text_pole flex1" value="${Number(settings.novelaiHeight) || 1216}" min="64" max="2048" step="64"></div></div>
@@ -7010,10 +7015,11 @@ function createSettingsUI() {
                     </div>
                     <div class="iig-subsection" id="slay_novelai_advanced">
                         <div class="iig-subhead" data-sec="nai-adv"><i class="fa-solid fa-sliders"></i> Тонкие настройки NovelAI</div>
-                        <div class="flex-row"><label>Шаги</label><input type="number" id="slay_novelai_steps" class="text_pole flex1" value="${Number(settings.novelaiSteps) || 28}" min="1" max="50" step="1"><span class="hint" style="margin:0 0 0 6px;white-space:nowrap;">до 28 бесплатно</span></div>
+                        <div class="hint iig-hidden" id="slay_novelai_medium_hint" style="margin:2px 0 6px;">Medium Effort: 14 шагов, Euler Ancestral, без CFG rescale — закреплено, как на сайте NovelAI (эти три строки скрыты). CFG, размер, стиль и негатив ваши; обычный размер бесплатен на Opus.</div>
+                        <div class="flex-row" id="slay_novelai_steps_row"><label>Шаги</label><input type="number" id="slay_novelai_steps" class="text_pole flex1" value="${Number(settings.novelaiSteps) || 28}" min="1" max="50" step="1"><span class="hint" style="margin:0 0 0 6px;white-space:nowrap;">до 28 бесплатно</span></div>
                         <div class="flex-row"><label>CFG</label><input type="number" id="slay_novelai_cfg" class="text_pole flex1" value="${Number.isFinite(Number(settings.novelaiCfgScale)) ? Number(settings.novelaiCfgScale) : 5}" min="0" max="10" step="0.1"></div>
-                        <div class="flex-row"><label>CFG rescale</label><input type="number" id="slay_novelai_cfg_rescale" class="text_pole flex1" value="${Number(settings.novelaiCfgRescale) || 0}" min="0" max="1" step="0.01"></div>
-                        <div class="flex-row"><label>Сэмплер</label><select id="slay_novelai_sampler" class="flex1">${NAI_SAMPLER_OPTIONS.map(o => `<option value="${o.v}" ${(settings.novelaiSampler || 'k_euler_ancestral') === o.v ? 'selected' : ''}>${o.l}</option>`).join('')}</select></div>
+                        <div class="flex-row" id="slay_novelai_cfg_rescale_row"><label>CFG rescale</label><input type="number" id="slay_novelai_cfg_rescale" class="text_pole flex1" value="${Number(settings.novelaiCfgRescale) || 0}" min="0" max="1" step="0.01"></div>
+                        <div class="flex-row" id="slay_novelai_sampler_row"><label>Сэмплер</label><select id="slay_novelai_sampler" class="flex1">${NAI_SAMPLER_OPTIONS.map(o => `<option value="${o.v}" ${(settings.novelaiSampler || 'k_euler_ancestral') === o.v ? 'selected' : ''}>${o.l}</option>`).join('')}</select></div>
                         <div class="flex-row" id="slay_novelai_schedule_row"><label>Noise schedule</label><select id="slay_novelai_schedule" class="flex1">${['karras', 'native', 'exponential', 'polyexponential'].map(v => `<option value="${v}" ${(settings.novelaiNoiseSchedule || 'karras') === v ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
                         <div class="flex-row" id="slay_novelai_skipcfg_row"><label>Skip CFG above σ</label><input type="number" id="slay_novelai_skip_cfg" class="text_pole flex1" value="${Number(settings.novelaiSkipCfgAboveSigma) || 0}" min="0" max="100" step="0.1" title="0 = выключено; NAI «CFG delay» (variety+) ≈ 19"></div>
                         <div class="flex-row"><label>Seed</label><input type="number" id="slay_novelai_seed" class="text_pole flex1" value="${Number.isFinite(Number(settings.novelaiSeed)) ? Number(settings.novelaiSeed) : -1}" min="-1" max="4294967295" step="1" title="−1 = случайный"><div id="slay_novelai_seed_random" class="menu_button" title="Случайный (−1)"><i class="fa-solid fa-dice"></i></div></div>

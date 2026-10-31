@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import {
     parseNaiInstruction, naiStyleTags, composeNaiNegative, composeNaiPrompt, buildNaiPluginBody,
     findBubbleRegions, wrapText, fitText, layoutBubbles, renderBubbles, decodeEntities, BLANK_BUBBLE_NEGATIVES,
-    normalizeNaiModel, resolveNaiLook, NAI_MODEL_45, NAI_MODEL_V5, NAI_HOUSE_VIBES, NAI_V5_SUFFIX,
+    normalizeNaiModel, resolveNaiLook, NAI_MODEL_45, NAI_MODEL_V5, NAI_MODEL_V5_MEDIUM, NAI_HOUSE_VIBES, NAI_V5_SUFFIX,
+    isNaiV5, isNaiV5Medium, naiFixedParams, NAI_MEDIUM_FIXED,
 } from '../nai-comics.js';
 
 // Monospace-ish stub: every character is 0.55 em wide.
@@ -274,6 +275,27 @@ test('instruction "model" / "look" is normalised; absent or unknown → null', (
     assert.equal(parseNaiInstruction({ prompt: '1girl' }).model, null, 'plain prompts have no model');
     assert.equal(normalizeNaiModel(undefined), null);
     assert.equal(parseNaiInstruction('{"base":"1boy, 1girl","model":"v5"}').model, NAI_MODEL_V5, 'JSON string input');
+});
+
+test('Medium Effort: its own V5 model id with aliases, counts as V5, pins steps / sampler / CFG rescale', () => {
+    for (const a of ['medium', 'Medium', 'v5 medium', 'v5-medium', 'v5m', 'nai-diffusion-5-full-medium']) {
+        assert.equal(normalizeNaiModel(a), NAI_MODEL_V5_MEDIUM, a);
+    }
+    assert.equal(parseNaiInstruction({ base: '1girl', model: 'medium' }).model, NAI_MODEL_V5_MEDIUM);
+    assert.equal(isNaiV5(NAI_MODEL_V5_MEDIUM), true, 'same library slot, no vibes, V5 phrase');
+    assert.equal(isNaiV5Medium(NAI_MODEL_V5_MEDIUM), true);
+    assert.equal(isNaiV5Medium(NAI_MODEL_V5), false);
+    assert.deepEqual(naiFixedParams(NAI_MODEL_V5_MEDIUM), { steps: 14, sampler: 'k_euler_ancestral', cfg_rescale: 0 });
+    assert.deepEqual(naiFixedParams(NAI_MODEL_V5_MEDIUM), NAI_MEDIUM_FIXED);
+    assert.notEqual(naiFixedParams(NAI_MODEL_V5_MEDIUM), NAI_MEDIUM_FIXED, 'a copy, the frozen table is not handed out');
+    assert.equal(naiFixedParams(NAI_MODEL_V5), null);
+    assert.equal(naiFixedParams(NAI_MODEL_45), null);
+    assert.equal(naiFixedParams(undefined), null);
+    const look = resolveNaiLook(parseNaiInstruction({ base: '1girl' }), { settingsModel: NAI_MODEL_V5_MEDIUM, uiVibes: [{ name: 'violet', strength: 0.6 }] });
+    assert.equal(look.model, NAI_MODEL_V5_MEDIUM);
+    assert.equal(look.v5, true);
+    assert.deepEqual(look.vibes, []);
+    assert.equal(look.styleSuffix, NAI_V5_SUFFIX);
 });
 
 test('nsfw is read from the base', () => {

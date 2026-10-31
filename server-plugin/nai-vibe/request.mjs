@@ -78,6 +78,15 @@ export function isV5(model) {
     return /^nai-diffusion-5/.test(String(model || ''));
 }
 
+// «Medium Effort» = V5 Full distilled, its own model id. The NovelAI site pins these three knobs for it
+// (14 steps, Euler Ancestral, no CFG rescale); CFG, size and the negatives stay the caller's.
+export const V5_MEDIUM_MODEL = 'nai-diffusion-5-full-medium';
+export const V5_MEDIUM_FIXED = Object.freeze({ steps: 14, sampler: 'k_euler_ancestral', cfg_rescale: 0 });
+
+export function isV5Medium(model) {
+    return String(model || '') === V5_MEDIUM_MODEL;
+}
+
 /**
  * Build the body for POST https://image.novelai.net/ai/generate-image.
  *
@@ -153,5 +162,7 @@ export function buildGenerateRequest(b = {}, refs = []) {
         delete parameters.noise_schedule;
         delete parameters.skip_cfg_above_sigma;
     }
+    // Medium Effort: the site's pinned knobs win over whatever the caller sent (14 steps is inside the free tier).
+    if (isV5Medium(model)) Object.assign(parameters, V5_MEDIUM_FIXED);
     return { action: 'generate', input: prompt, model, parameters };
 }
