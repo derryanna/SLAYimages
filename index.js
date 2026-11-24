@@ -2815,6 +2815,9 @@ const defaultSettings = Object.freeze({
     novelaiVibes: [],
     // Precise Reference (V5): [{ name, type, strength, sameOutfit, enabled, thumb }] — the pictures live on the server (nai-refs)
     novelaiPreciseRefs: [],
+    // Portraits and the active wardrobe outfit from «Референсы персонажей» as Precise Reference (paid, so off by default)
+    novelaiPortraitRefs: false,
+    novelaiPortraitStrength: 1,
     // Style picker
     slayStyle: '',
     slayStyleName: '',
@@ -4614,6 +4617,79 @@ async function renderNovelaiPreciseRefs() {
     }));
 }
 
+function naiPortraitHintText(settings) {
+    return settings.novelaiPortraitRefs
+        ? 'NovelAI V5: портрет и активная одежда уходят как Precise Reference, когда персонаж назван в блоке картинки. 5 Anlas за каждую отправленную картинку; нужна галочка «Разрешить Anlas».'
+        : 'NovelAI: портреты здесь только хранятся. Чтобы слать их на V5 — галочка «Портреты и одежда из раздела „Референсы персонажей“» в настройках NovelAI (платно).';
+}
+
+// ── NovelAI V5: портреты и гардероб из «Референсы персонажей» как Precise Reference ──
+// Как и у остальных генераторов, картинка уходит только когда её хозяин назван: здесь имя ищется в поле "name"
+// персонажей блока, в их тегах и в base. Каждая отправленная картинка стоит Anlas, поэтому включается отдельной галочкой.
+function naiRefHaystack(prompt, instr) {
+    const parts = [prompt, instr?.base];
+    for (const c of instr?.characters || []) parts.push(c.name, c.prompt);
+    return parts.filter(Boolean).join(' \n ').toLowerCase();
+}
+
+async function naiRefPngFromBase64(b64, nl) {
+    if (!b64) return null;
+    const src = b64.startsWith('data:') ? b64 : `data:image/jpeg;base64,${b64}`;
+    try {
+        const img = await new Promise((resolve, reject) => {
+            const im = new Image();
+            im.onload = () => resolve(im);
+            im.onerror = () => reject(new Error('картинка не открылась'));
+            im.src = src;
+        });
+        return naiRefCanvas(img, nl).toDataURL('image/png');
+    } catch (e) { iigLog('WARN', `NovelAI reference picture skipped: ${e.message}`); return null; }
+}
+
+// Картинка → холст в размере, который берёт NovelAI для V5 (ближайший «бакет» ~1 МП, обрезка по центру).
+function naiRefCanvas(img, nl) {
+    const b = nl.naiRefBucket(img.naturalWidth, img.naturalHeight);
+    const c = document.createElement('canvas');
+    c.width = b.width; c.height = b.height;
+    const g = c.getContext('2d');
+    g.fillStyle = '#000'; g.fillRect(0, 0, b.width, b.height);
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(img, -b.left, -b.top, b.resizeWidth, b.resizeHeight);
+    return c;
+}
+
+async function collectNaiPortraitRefs(prompt, instr, settings, nl, room) {
+    const out = [];
+    if (!settings.novelaiPortraitRefs || room <= 0) return out;
+    const hay = naiRefHaystack(prompt, instr);
+    const refs = getCurrentCharacterRefs();
+    const n = Number(settings.novelaiPortraitStrength);
+    const strength = Number.isFinite(n) ? Math.min(nl.NAI_REF_MAX_STRENGTH, Math.max(0, n)) : 1;
+    const load = async (ref) => ref?.imagePath ? await loadRefImageAsBase64(ref.imagePath) : (ref?.imageBase64 || ref?.imageData || null);
+    const push = async (b64, type, label) => {
+        if (out.length >= room) return;
+        const image = await naiRefPngFromBase64(b64, nl);
+        if (image) out.push({ image, type, strength, name: label });
+    };
+    const sw = SillyTavern.getContext().extensionSettings.slay_wardrobe || {};
+    const wardrobe = window.slayWardrobe?.isReady?.() ? window.slayWardrobe : null;
+    const owners = [
+        { ref: refs.charRef, name: getDefaultCharRefName(refs), side: 'bot', outfitOn: sw.sendOutfitImageBot !== false },
+        { ref: refs.userRef, name: getDefaultUserRefName(refs), side: 'user', outfitOn: sw.sendOutfitImageUser !== false },
+    ];
+    for (const o of owners) {
+        if (!nameIsInPrompt(o.name, hay)) continue;
+        if (hasManualReference(o.ref)) await push(await load(o.ref), 'character', o.name);
+        if (wardrobe && o.outfitOn) {
+            let outfit = null;
+            try { outfit = await wardrobe.getActiveOutfitBase64(o.side); } catch { outfit = null; }
+            if (outfit) await push(outfit, 'costume', `${o.name}: одежда`);
+        }
+    }
+    for (const npc of matchNpcReferences(hay, refs.npcReferences || [])) await push(await load(npc), 'character', npc.name || 'NPC');
+    return out;
+}
+
 // Картинка-референс → PNG в размере, который берёт NovelAI (ближайший «бакет» ~1 МП, обрезка по центру), и миниатюра.
 async function prepareNaiPreciseRef(file, nl) {
     const url = URL.createObjectURL(file);
@@ -4624,13 +4700,8 @@ async function prepareNaiPreciseRef(file, nl) {
             im.onerror = () => reject(new Error('не удалось открыть картинку'));
             im.src = url;
         });
-        const b = nl.naiRefBucket(img.naturalWidth, img.naturalHeight);
-        const c = document.createElement('canvas');
-        c.width = b.width; c.height = b.height;
-        const g = c.getContext('2d');
-        g.fillStyle = '#000'; g.fillRect(0, 0, b.width, b.height);
-        g.imageSmoothingQuality = 'high';
-        g.drawImage(img, -b.left, -b.top, b.resizeWidth, b.resizeHeight);
+        const c = naiRefCanvas(img, nl);
+        const b = { width: c.width, height: c.height };
         const k = 96 / Math.max(b.width, b.height);
         const t = document.createElement('canvas');
         t.width = Math.max(1, Math.round(b.width * k)); t.height = Math.max(1, Math.round(b.height * k));
@@ -4665,7 +4736,7 @@ async function updateNaiKnobsUI() {
     const pRefsOk = nl.naiSupportsPreciseRefs(settings.novelaiModel);
     const pHint = document.getElementById('slay_novelai_pref_hint');
     if (pHint) {
-        const why = !pRefs.length ? '' : !pRefsOk ? 'Выбранная модель референсы не принимает — они будут пропущены.' : !params.allowAnlas ? 'Без галочки «Разрешить Anlas» референсы не отправляются.' : '';
+        const why = !(pRefs.length || settings.novelaiPortraitRefs) ? '' : !pRefsOk ? 'Выбранная модель референсы не принимает — они будут пропущены.' : !params.allowAnlas ? 'Без галочки «Разрешить Anlas» референсы не отправляются.' : '';
         pHint.textContent = why;
         pHint.classList.toggle('iig-hidden', !why);
     }
@@ -5078,6 +5149,10 @@ async function generateImageNovelAI(prompt, style, options = {}) {
     });
     // Precise Reference (V5 Full / Curated): 5 Anlas per reference, so only with «Разрешить Anlas»; otherwise say why it was left out.
     const preciseRefs = nl.activeNaiPreciseRefs(settings);
+    const preciseOk = viaPlugin && nl.naiSupportsPreciseRefs(model) && params.allowAnlas;
+    // Portraits / wardrobe of the characters named in this picture's block (loaded only when they can really be sent).
+    if (preciseOk) preciseRefs.push(...await collectNaiPortraitRefs(prompt, instr, settings, nl, nl.NAI_REF_MAX - preciseRefs.length));
+    else if (settings.novelaiPortraitRefs && !preciseRefs.length) preciseRefs.push({ name: 'портреты', type: 'character', strength: 1, placeholder: true });
     if (preciseRefs.length) {
         const why = !viaPlugin ? 'нет серверного плагина nai-vibe'
             : !nl.naiSupportsPreciseRefs(model) ? 'эта модель их не принимает (нужна V5 или V5 Curated)'
@@ -5088,7 +5163,7 @@ async function generateImageNovelAI(prompt, style, options = {}) {
         } else {
             body.precise_refs = preciseRefs;
             naiRefsSkipWarned = '';
-            iigLog('INFO', `NovelAI Precise Reference (${preciseRefs.length} × ${nl.NAI_REF_COST} Anlas): ${preciseRefs.map(r => `${r.name}=${r.type}${r.same_outfit ? '+outfit' : ''}:${r.strength}`).join(' ')}`);
+            iigLog('INFO', `NovelAI Precise Reference (${preciseRefs.length} × ${nl.NAI_REF_COST} = ${preciseRefs.length * nl.NAI_REF_COST} Anlas): ${preciseRefs.map(r => `${r.name}=${r.type}${r.same_outfit ? '+outfit' : ''}:${r.strength}${r.image ? ' (портрет/гардероб)' : ''}`).join(', ')}`);
         }
     }
     if (!viaPlugin && body.characters.length) {
@@ -7129,6 +7204,8 @@ function createSettingsUI() {
                         <div class="flex-row"><label>Референсы V5</label><div class="flex1" style="font-size:0.85em;opacity:0.85;">Precise Reference: персонаж, стиль или одежда с картинки. <b>5 Anlas за каждый включённый референс на каждую картинку</b>, нужна галочка «Разрешить Anlas». Работает на V5 и V5 Curated, на Medium Effort — нет</div><label class="menu_button" title="Загрузить картинку-референс" style="margin:0;"><i class="fa-solid fa-upload"></i><input type="file" id="slay_novelai_pref_file" accept="image/png,image/jpeg,image/webp" multiple hidden></label></div>
                         <p class="hint iig-hidden" id="slay_novelai_pref_hint" style="margin-top:0;color:#ff9800;"></p>
                         <div id="slay_novelai_pref_list"></div>
+                        <label class="checkbox_label" style="margin-top:4px;"><input type="checkbox" id="slay_novelai_portrait_refs" ${settings.novelaiPortraitRefs ? 'checked' : ''}><span style="font-size:0.85em;opacity:0.85;">Портреты и одежда из раздела «Референсы персонажей»: слать, когда персонаж назван в блоке картинки (5 Anlas за каждую картинку-референс)</span></label>
+                        <div class="flex-row ${settings.novelaiPortraitRefs ? '' : 'iig-hidden'}" id="slay_novelai_portrait_strength_row"><label>Сила портретов</label><input type="number" id="slay_novelai_portrait_strength" class="text_pole" min="0" max="5" step="0.05" value="${Number(settings.novelaiPortraitStrength ?? 1)}" style="width:5em;flex:0 0 auto;"></div>
                     </div>
                     <div class="iig-subsection" id="slay_novelai_advanced">
                         <div class="iig-subhead" data-sec="nai-adv"><i class="fa-solid fa-sliders"></i> Тонкие настройки NovelAI</div>
@@ -8587,11 +8664,10 @@ function bindSettingsEvents() {
                 naiRefsHint.id = 'slay_refs_nai_hint';
                 naiRefsHint.className = 'hint';
                 naiRefsHint.style.color = '#ff9800';
-                naiRefsHint.textContent = 'NovelAI: портреты здесь только хранятся, в генерацию они не отправляются.';
                 refsHead.insertAdjacentElement('afterend', naiRefsHint);
             }
         }
-        if (naiRefsHint) naiRefsHint.classList.toggle('iig-hidden', !isNovelAI);
+        if (naiRefsHint) { naiRefsHint.textContent = naiPortraitHintText(settings); naiRefsHint.classList.toggle('iig-hidden', !isNovelAI); }
         document.getElementById('slay_image_context_section')?.classList.toggle('iig-hidden', !supportsRefs);
         document.getElementById('slay_image_context_count_row')?.classList.toggle('iig-hidden', !settings.imageContextEnabled || !supportsRefs);
 
@@ -8913,6 +8989,17 @@ function bindSettingsEvents() {
             }
         }
         renderNovelaiVibes();
+    });
+    document.getElementById('slay_novelai_portrait_refs')?.addEventListener('change', (e) => {
+        settings.novelaiPortraitRefs = e.target.checked; saveSettings();
+        document.getElementById('slay_novelai_portrait_strength_row')?.classList.toggle('iig-hidden', !e.target.checked);
+        updateNaiKnobsUI();
+        const hint = document.getElementById('slay_refs_nai_hint');
+        if (hint) hint.textContent = naiPortraitHintText(settings);
+    });
+    document.getElementById('slay_novelai_portrait_strength')?.addEventListener('input', (e) => {
+        const n = parseFloat(e.target.value);
+        if (!isNaN(n)) { settings.novelaiPortraitStrength = Math.min(5, Math.max(0, n)); saveSettings(); }
     });
     document.getElementById('slay_novelai_pref_file')?.addEventListener('change', async (e) => {
         const files = [...(e.target.files || [])];

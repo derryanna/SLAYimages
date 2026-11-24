@@ -122,6 +122,14 @@ export async function init(router) {
         const director = [];
         if (b.allow_anlas === true && supportsPreciseRefs(model)) {
             for (const r of normalizePreciseRefs(b.precise_refs)) {
+                if (r.image) {   // picture sent with the request (a portrait or a wardrobe outfit)
+                    const buf = Buffer.from(r.image, 'base64');
+                    if (buf.length < 100 || buf.length > MAX_REF_BYTES || !buf.subarray(0, 8).equals(PNG_MAGIC)) {
+                        return res.status(400).send(`Референс «${r.name || r.type}»: нужна PNG-картинка до 8 МБ.`);
+                    }
+                    director.push({ image: r.image, description: r.description, strength: r.strength });
+                    continue;
+                }
                 const file = path.join(refDir(req), safeName(r.name) + '.png');
                 if (!fs.existsSync(file)) return res.status(400).send(`Референс «${r.name}» не найден на сервере.`);
                 director.push({ image: fs.readFileSync(file).toString('base64'), description: r.description, strength: r.strength });

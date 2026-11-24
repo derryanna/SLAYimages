@@ -214,3 +214,11 @@ test('precise reference: sent only on a supporting model with allow_anlas', () =
         assert.equal('director_reference_images' in off, false, JSON.stringify(b));
     }
 });
+
+test('precise reference: a picture may come inline (portrait / wardrobe), with or without a name', () => {
+    const l = normalizePreciseRefs([{ image: 'data:image/png;base64,QUJD', type: 'costume', strength: 1.5, name: 'Hero: outfit' }, { image: 'REVG' }, { type: 'style' }]);
+    assert.deepEqual(l, [
+        { name: 'Hero: outfit', type: 'costume', strength: 1.5, description: 'costume', image: 'QUJD' },
+        { name: '', type: 'character', strength: 1, description: 'character', image: 'REVG' },
+    ]);
+});

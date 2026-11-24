@@ -107,17 +107,22 @@ export function preciseRefDescription(type, sameOutfit) {
     return sameOutfit ? 'character_mainoutfit' : 'character';
 }
 
-// [{ name, type, strength, same_outfit }] from the request body → clean list (unknown type = character).
+// [{ name, type, strength, same_outfit, image? }] from the request body → clean list (unknown type = character).
+// name = a picture stored on the server (nai-refs); image = the picture itself (base64 PNG or a PNG data URL),
+// used for the portraits and wardrobe outfits the extension already keeps.
 export function normalizePreciseRefs(list) {
     if (!Array.isArray(list)) return [];
     const out = [];
     for (const r of list) {
         const name = String(r?.name || '').trim();
-        if (!name) continue;
+        const image = typeof r?.image === 'string' ? r.image.replace(/^data:image\/png;base64,/, '') : '';
+        if (!name && !image) continue;
         const type = PRECISE_REF_TYPES.includes(r.type) ? r.type : 'character';
         const n = Number(r.strength);
         const strength = Number.isFinite(n) ? Math.min(PRECISE_REF_MAX_STRENGTH, Math.max(0, n)) : 1;
-        out.push({ name, type, strength, description: preciseRefDescription(type, r.same_outfit === true) });
+        const entry = { name, type, strength, description: preciseRefDescription(type, r.same_outfit === true) };
+        if (image) entry.image = image;
+        out.push(entry);
         if (out.length >= PRECISE_REF_MAX) break;
     }
     return out;
