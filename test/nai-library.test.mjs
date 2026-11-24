@@ -215,3 +215,35 @@ test('favourite styles: ★ survives the load clean-up, goes first, is not copie
     assert.equal('fav' in s.naiStyles.find(e => e.id === last), false);
     assert.deepEqual(favFirst(s.naiStyles).map(e => e.id).slice(0, 2), ids.slice(0, 2));
 });
+
+// ── Precise Reference (V5) ──
+import { naiRefBucket, activeNaiPreciseRefs, naiSupportsPreciseRefs, NAI_REF_COST } from '../nai-library.js';
+
+test('naiRefBucket: closest ~1 MP bucket, cover resize, centre crop', () => {
+    assert.deepEqual(naiRefBucket(1440, 2184), { width: 832, height: 1216, resizeWidth: 832, resizeHeight: 1262, left: 0, top: 23 });
+    assert.deepEqual(naiRefBucket(1024, 1024), { width: 1024, height: 1024, resizeWidth: 1024, resizeHeight: 1024, left: 0, top: 0 });
+    const wide = naiRefBucket(450, 358);
+    assert.deepEqual([wide.width, wide.height], [1152, 896]);
+    assert.ok(wide.resizeWidth >= wide.width && wide.resizeHeight >= wide.height);
+    const tall = naiRefBucket(100, 5000);
+    assert.deepEqual([tall.width, tall.height], [256, 4096]);
+});
+
+test('activeNaiPreciseRefs: ticked entries only, outfit tick only for character types', () => {
+    const s = { novelaiPreciseRefs: [
+        { name: 'a', type: 'character', strength: 1.2, sameOutfit: true, enabled: true, thumb: 'x' },
+        { name: 'b', type: 'style', strength: 7, sameOutfit: true, enabled: true },
+        { name: 'c', type: 'costume', enabled: false },
+    ] };
+    assert.deepEqual(activeNaiPreciseRefs(s), [
+        { name: 'a', type: 'character', strength: 1.2, same_outfit: true },
+        { name: 'b', type: 'style', strength: 5 },
+    ]);
+    assert.deepEqual(activeNaiPreciseRefs({}), []);
+});
+
+test('naiCost counts precise references; only V5 Full / Curated support them', () => {
+    assert.deepEqual(naiCost({ width: 832, height: 1216, steps: 28, refs: 2 }), { free: false, reasons: [`референсы 2 × ${NAI_REF_COST} = 10 Anlas за картинку`] });
+    assert.equal(naiSupportsPreciseRefs('nai-diffusion-5-full'), true);
+    assert.equal(naiSupportsPreciseRefs('nai-diffusion-5-full-medium'), false);
+});

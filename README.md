@@ -262,6 +262,8 @@ This fork ([derryanna/SLAYimages](https://github.com/derryanna/SLAYimages)) trac
 
 Vibe files are stored per user in `data/<user>/nai-vibes/`. A vibe only works with the model it was encoded for (shown next to its name).
 
+**Precise Reference (V5)** — the «Референсы V5» list under the vibes: upload a picture, choose what NovelAI takes from it («Персонаж», «Стиль», «Одежда», «Персонаж и стиль»), set the strength (0–5, 1 is the usual value, style often wants more) and tick it. «та же одежда, что на картинке» is the site's *Prefer same outfit*. Several references can be ticked at once. **Every ticked reference costs 5 Anlas on every picture** (the Opus free generations do not cover it), so references are sent only with «Разрешить Anlas» on; the badge under the size row shows the sum. Works on V5 and V5 Curated; Medium Effort and the older models do not take it, the references are then left out and a toast says why. The picture is cut in the browser to the ~1 MP bucket NovelAI uses and stored per user in `data/<user>/nai-refs/`. Needs the `nai-vibe` plugin from this version (restart SillyTavern after updating it).
+
 ### Per-image model switch
 
 The prompt block may add `"model": "4.5"`, `"model": "v5"` or `"model": "medium"` (also accepted: `"look": "hot" | "clean"`) to the `data-iig-instruction` JSON. SLAY then picks `nai-diffusion-4-5-full`, `nai-diffusion-5-full` or `nai-diffusion-5-full-medium` for that one image; without the field the model from the settings is used.

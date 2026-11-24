@@ -87,6 +87,42 @@ export function isV5Medium(model) {
     return String(model || '') === V5_MEDIUM_MODEL;
 }
 
+// ── Precise Reference (V5 Full / Curated): character, style and outfit from example pictures ──
+// Every reference costs Anlas on every picture, so it is sent only when the body carries allow_anlas: true.
+// Field names and the description strings are the ones novelai.net sends (checked against the live API).
+export const PRECISE_REF_COST = 5;          // Anlas per reference per picture
+export const PRECISE_REF_MAX = 8;
+export const PRECISE_REF_MAX_STRENGTH = 5;
+export const PRECISE_REF_TYPES = ['character', 'style', 'costume', 'character&style'];
+
+// Medium Effort answers 400 «doesn't support director reference images».
+export function supportsPreciseRefs(model) {
+    return /^nai-diffusion-5-(full|curated)$/.test(String(model || ''));
+}
+
+// «Prefer same outfit» on the site switches the description string, not a separate field.
+export function preciseRefDescription(type, sameOutfit) {
+    if (type === 'style' || type === 'costume') return type;
+    if (type === 'character&style') return sameOutfit ? 'character&style' : 'character&style_anyoutfit';
+    return sameOutfit ? 'character_mainoutfit' : 'character';
+}
+
+// [{ name, type, strength, same_outfit }] from the request body → clean list (unknown type = character).
+export function normalizePreciseRefs(list) {
+    if (!Array.isArray(list)) return [];
+    const out = [];
+    for (const r of list) {
+        const name = String(r?.name || '').trim();
+        if (!name) continue;
+        const type = PRECISE_REF_TYPES.includes(r.type) ? r.type : 'character';
+        const n = Number(r.strength);
+        const strength = Number.isFinite(n) ? Math.min(PRECISE_REF_MAX_STRENGTH, Math.max(0, n)) : 1;
+        out.push({ name, type, strength, description: preciseRefDescription(type, r.same_outfit === true) });
+        if (out.length >= PRECISE_REF_MAX) break;
+    }
+    return out;
+}
+
 /**
  * Build the body for POST https://image.novelai.net/ai/generate-image.
  *
@@ -98,8 +134,10 @@ export function isV5Medium(model) {
  *   model, width, height, scale, sampler, steps, seed, scheduler, quality,
  *   cfg_rescale, skip_cfg_above_sigma (4.5 only), allow_anlas (lift the free-tier clamp)
  * @param {Array<{encoding:string, strength:number, ie:number}>} refs vibe encodings
+ * @param {Array<{image:string, description:string, strength:number}>} director Precise Reference pictures
+ *   (base64 PNG, already cut to a ~1 MP bucket); used only on V5 Full / Curated with allow_anlas
  */
-export function buildGenerateRequest(b = {}, refs = []) {
+export function buildGenerateRequest(b = {}, refs = [], director = []) {
     const model = b.model || 'nai-diffusion-5-full';
     const rawPrompt = String(b.prompt ?? b.base ?? '');
     const prompt = b.quality === false ? rawPrompt : withQuality(rawPrompt);
@@ -164,5 +202,13 @@ export function buildGenerateRequest(b = {}, refs = []) {
     }
     // Medium Effort: the site's pinned knobs win over whatever the caller sent (14 steps is inside the free tier).
     if (isV5Medium(model)) Object.assign(parameters, V5_MEDIUM_FIXED);
+    if (director.length && anlas && supportsPreciseRefs(model)) {
+        parameters.director_reference_images = director.map(d => d.image);
+        parameters.director_reference_descriptions = director.map(d => ({ caption: { base_caption: d.description, char_captions: [] }, legacy_uc: false }));
+        parameters.director_reference_information_extracted = director.map(() => 1);
+        parameters.director_reference_strength_values = director.map(d => d.strength);
+        // V5 has no Fidelity slider: the site sends fidelity 1, i.e. secondary strength 0.
+        parameters.director_reference_secondary_strength_values = director.map(() => 0);
+    }
     return { action: 'generate', input: prompt, model, parameters };
 }

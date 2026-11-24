@@ -3365,3 +3365,12 @@
     .iig-nai-row { grid-template-columns: 1fr; }
     .iig-nai-row-acts { justify-content: flex-end; }
 }
+
+/* NovelAI Precise Reference rows: thumbnail, name, type, strength; the outfit tick wraps under them on a phone */
+.iig-nai-pref { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
+.iig-nai-pref img, .iig-nai-pref-noimg { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; opacity: 0.9; }
+.iig-nai-pref-name { flex: 1 1 5em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.iig-nai-pref select { flex: 0 1 auto; width: auto; max-width: 11em; margin: 0; }
+.iig-nai-pref input[type="number"] { width: 4.5em; flex: 0 0 auto; margin: 0; }
+.iig-nai-pref .menu_button { margin: 0; flex: 0 0 auto; }
+.iig-nai-pref-outfit { flex: 1 1 100%; margin: 0 0 0 24px; font-size: 0.85em; opacity: 0.85; }

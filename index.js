@@ -2813,6 +2813,8 @@ const defaultSettings = Object.freeze({
     // Плагин сервера nai-vibe: теги качества как на сайте NAI и вайбы (.naiv4vibe) — [{ name, strength, enabled }]
     novelaiQuality: true,
     novelaiVibes: [],
+    // Precise Reference (V5): [{ name, type, strength, sameOutfit, enabled, thumb }] — the pictures live on the server (nai-refs)
+    novelaiPreciseRefs: [],
     // Style picker
     slayStyle: '',
     slayStyleName: '',
@@ -4551,6 +4553,92 @@ async function renderNovelaiVibes() {
     }));
 }
 
+// ── Precise Reference (V5): картинки лежат на сервере (nai-refs), в настройках — тип, сила, галочка и миниатюра ──
+let naiRefsSkipWarned = '';
+async function renderNovelaiPreciseRefs() {
+    const box = document.getElementById('slay_novelai_pref_list');
+    if (!box) return;
+    const settings = getSettings();
+    let nl;
+    try { nl = await loadNaiLibrary(); } catch { return; }
+    let server;
+    try {
+        const r = await fetch(`${NAI_VIBE_API}/refs`, { headers: SillyTavern.getContext().getRequestHeaders() });
+        server = r.ok ? await r.json() : null;
+    } catch { server = null; }
+    if (!server) {
+        box.innerHTML = '<p class="hint">Референсы недоступны: серверный плагин nai-vibe не установлен или старый (нужен перезапуск таверны после обновления).</p>';
+        return;
+    }
+    const names = new Set(server.map(v => v.name));
+    const list = (settings.novelaiPreciseRefs || []).filter((v, i, all) => names.has(v.name) && all.findIndex(x => x.name === v.name) === i);
+    for (const v of server) if (!list.some(x => x.name === v.name)) list.push({ name: v.name, type: 'character', strength: 1, sameOutfit: false, enabled: false, thumb: '' });
+    settings.novelaiPreciseRefs = list;
+    if (!list.length) {
+        box.innerHTML = '<p class="hint">Пока пусто — загрузите картинку кнопкой выше.</p>';
+        return;
+    }
+    box.innerHTML = list.map((v, i) => {
+        const outfitable = v.type === 'character' || v.type === 'character&style' || !v.type;
+        return `<div class="iig-nai-pref">
+            <input type="checkbox" data-pref-on="${i}" ${v.enabled ? 'checked' : ''} title="Слать этот референс">
+            ${v.thumb ? `<img src="${sanitizeForHtml(v.thumb)}" alt="">` : '<span class="iig-nai-pref-noimg"><i class="fa-solid fa-image"></i></span>'}
+            <span class="iig-nai-pref-name" title="${sanitizeForHtml(v.name)}">${sanitizeForHtml(v.name)}</span>
+            <select data-pref-type="${i}" title="Что брать с картинки">${nl.NAI_REF_TYPES.map(t => `<option value="${t.v}" ${(v.type || 'character') === t.v ? 'selected' : ''}>${t.n}</option>`).join('')}</select>
+            <input type="number" class="text_pole" data-pref-strength="${i}" min="0" max="${nl.NAI_REF_MAX_STRENGTH}" step="0.05" value="${Number(v.strength ?? 1)}" title="Сила: 0–${nl.NAI_REF_MAX_STRENGTH}, обычно 1; для стиля можно выше">
+            <div class="menu_button" data-pref-del="${i}" title="Удалить с сервера"><i class="fa-solid fa-xmark"></i></div>
+            <label class="checkbox_label iig-nai-pref-outfit ${outfitable ? '' : 'iig-hidden'}"><input type="checkbox" data-pref-outfit="${i}" ${v.sameOutfit ? 'checked' : ''}><span>та же одежда, что на картинке</span></label>
+        </div>`;
+    }).join('');
+    box.querySelectorAll('[data-pref-on]').forEach(el => el.addEventListener('change', () => {
+        list[+el.dataset.prefOn].enabled = el.checked; saveSettings(); updateNaiKnobsUI();
+    }));
+    box.querySelectorAll('[data-pref-type]').forEach(el => el.addEventListener('change', () => {
+        list[+el.dataset.prefType].type = el.value; saveSettings(); renderNovelaiPreciseRefs();
+    }));
+    box.querySelectorAll('[data-pref-outfit]').forEach(el => el.addEventListener('change', () => {
+        list[+el.dataset.prefOutfit].sameOutfit = el.checked; saveSettings();
+    }));
+    box.querySelectorAll('[data-pref-strength]').forEach(el => el.addEventListener('input', () => {
+        const n = parseFloat(el.value);
+        if (!isNaN(n)) { list[+el.dataset.prefStrength].strength = Math.min(nl.NAI_REF_MAX_STRENGTH, Math.max(0, n)); saveSettings(); }
+    }));
+    box.querySelectorAll('[data-pref-del]').forEach(el => el.addEventListener('click', async () => {
+        const v = list[+el.dataset.prefDel];
+        if (!confirm(`Удалить референс «${v.name}» с сервера?`)) return;
+        await fetch(`${NAI_VIBE_API}/refs/${encodeURIComponent(v.name)}`, { method: 'DELETE', headers: SillyTavern.getContext().getRequestHeaders() });
+        settings.novelaiPreciseRefs = list.filter(x => x !== v);
+        saveSettings();
+        renderNovelaiPreciseRefs();
+        updateNaiKnobsUI();
+    }));
+}
+
+// Картинка-референс → PNG в размере, который берёт NovelAI (ближайший «бакет» ~1 МП, обрезка по центру), и миниатюра.
+async function prepareNaiPreciseRef(file, nl) {
+    const url = URL.createObjectURL(file);
+    try {
+        const img = await new Promise((resolve, reject) => {
+            const im = new Image();
+            im.onload = () => resolve(im);
+            im.onerror = () => reject(new Error('не удалось открыть картинку'));
+            im.src = url;
+        });
+        const b = nl.naiRefBucket(img.naturalWidth, img.naturalHeight);
+        const c = document.createElement('canvas');
+        c.width = b.width; c.height = b.height;
+        const g = c.getContext('2d');
+        g.fillStyle = '#000'; g.fillRect(0, 0, b.width, b.height);
+        g.imageSmoothingQuality = 'high';
+        g.drawImage(img, -b.left, -b.top, b.resizeWidth, b.resizeHeight);
+        const k = 96 / Math.max(b.width, b.height);
+        const t = document.createElement('canvas');
+        t.width = Math.max(1, Math.round(b.width * k)); t.height = Math.max(1, Math.round(b.height * k));
+        t.getContext('2d').drawImage(c, 0, 0, t.width, t.height);
+        return { image: c.toDataURL('image/png'), thumb: t.toDataURL('image/jpeg', 0.8) };
+    } finally { URL.revokeObjectURL(url); }
+}
+
 // ── NovelAI knobs panel: V5 hides schedule / skip-cfg, custom size row, free-tier badge, active style / negative names ──
 async function updateNaiKnobsUI() {
     const settings = getSettings();
@@ -4572,7 +4660,16 @@ async function updateNaiKnobsUI() {
     const params = nl.normalizeNaiParams(settings);
     const auto = (settings.novelaiAspectRatio || 'auto') === 'auto';
     const [w, h] = nl.resolveNaiSize(settings, null, '2:3');
-    const cost = nl.naiCost({ width: w, height: h, steps: params.steps });
+    // Precise Reference: counted only when it will really be sent (V5 Full / Curated + «Разрешить Anlas»).
+    const pRefs = nl.activeNaiPreciseRefs(settings);
+    const pRefsOk = nl.naiSupportsPreciseRefs(settings.novelaiModel);
+    const pHint = document.getElementById('slay_novelai_pref_hint');
+    if (pHint) {
+        const why = !pRefs.length ? '' : !pRefsOk ? 'Выбранная модель референсы не принимает — они будут пропущены.' : !params.allowAnlas ? 'Без галочки «Разрешить Anlas» референсы не отправляются.' : '';
+        pHint.textContent = why;
+        pHint.classList.toggle('iig-hidden', !why);
+    }
+    const cost = nl.naiCost({ width: w, height: h, steps: params.steps, refs: pRefsOk && params.allowAnlas ? pRefs.length : 0 });
     const costEl = document.getElementById('slay_novelai_cost');
     if (costEl) {
         const size = auto ? 'размер из промпта (до 1 МП)' : `${w}×${h}`;
@@ -4979,6 +5076,21 @@ async function generateImageNovelAI(prompt, style, options = {}) {
         steps: tier.steps, scale: params.scale, sampler: params.sampler, scheduler: params.scheduler,
         cfgRescale: params.cfg_rescale, seed: params.seed, skipCfgAboveSigma: params.skip_cfg_above_sigma, allowAnlas: params.allowAnlas,
     });
+    // Precise Reference (V5 Full / Curated): 5 Anlas per reference, so only with «Разрешить Anlas»; otherwise say why it was left out.
+    const preciseRefs = nl.activeNaiPreciseRefs(settings);
+    if (preciseRefs.length) {
+        const why = !viaPlugin ? 'нет серверного плагина nai-vibe'
+            : !nl.naiSupportsPreciseRefs(model) ? 'эта модель их не принимает (нужна V5 или V5 Curated)'
+            : !params.allowAnlas ? 'не стоит галочка «Разрешить Anlas»' : '';
+        if (why) {
+            iigLog('WARN', `NovelAI: Precise Reference skipped — ${why}`);
+            if (naiRefsSkipWarned !== why) { naiRefsSkipWarned = why; toastr.warning(`Референсы V5 пропущены: ${why}`, 'SLAY Images', { timeOut: 5000 }); }
+        } else {
+            body.precise_refs = preciseRefs;
+            naiRefsSkipWarned = '';
+            iigLog('INFO', `NovelAI Precise Reference (${preciseRefs.length} × ${nl.NAI_REF_COST} Anlas): ${preciseRefs.map(r => `${r.name}=${r.type}${r.same_outfit ? '+outfit' : ''}:${r.strength}`).join(' ')}`);
+        }
+    }
     if (!viaPlugin && body.characters.length) {
         // ST's endpoint has no character slots: fold them into the base prompt so nothing is lost.
         body.prompt = [body.prompt, ...body.characters.map(c => c.prompt)].join(', ');
@@ -7013,6 +7125,11 @@ function createSettingsUI() {
                         <div class="flex-row"><label>Вайбы</label><div class="flex1" style="font-size:0.85em;opacity:0.85;">стиль с картинки-образца (.naiv4vibe); сила 0.2–0.6 обычно. Без галочек на 4.5 идёт домашний вайб (aur10 0.6); на V5 вайбы всегда выключены</div><label class="menu_button" title="Загрузить .naiv4vibe" style="margin:0;"><i class="fa-solid fa-upload"></i><input type="file" id="slay_novelai_vibe_file" accept=".naiv4vibe,.json" multiple hidden></label></div>
                         <div id="slay_novelai_vibe_list"></div>
                     </div>
+                    <div id="slay_novelai_prefs_row" style="margin-top:4px;">
+                        <div class="flex-row"><label>Референсы V5</label><div class="flex1" style="font-size:0.85em;opacity:0.85;">Precise Reference: персонаж, стиль или одежда с картинки. <b>5 Anlas за каждый включённый референс на каждую картинку</b>, нужна галочка «Разрешить Anlas». Работает на V5 и V5 Curated, на Medium Effort — нет</div><label class="menu_button" title="Загрузить картинку-референс" style="margin:0;"><i class="fa-solid fa-upload"></i><input type="file" id="slay_novelai_pref_file" accept="image/png,image/jpeg,image/webp" multiple hidden></label></div>
+                        <p class="hint iig-hidden" id="slay_novelai_pref_hint" style="margin-top:0;color:#ff9800;"></p>
+                        <div id="slay_novelai_pref_list"></div>
+                    </div>
                     <div class="iig-subsection" id="slay_novelai_advanced">
                         <div class="iig-subhead" data-sec="nai-adv"><i class="fa-solid fa-sliders"></i> Тонкие настройки NovelAI</div>
                         <div class="hint iig-hidden" id="slay_novelai_medium_hint" style="margin:2px 0 6px;">Medium Effort: 14 шагов, Euler Ancestral, без CFG rescale — закреплено, как на сайте NovelAI (эти три строки скрыты). CFG, размер, стиль и негатив ваши; обычный размер бесплатен на Opus.</div>
@@ -8447,7 +8564,7 @@ function bindSettingsEvents() {
         document.getElementById('slay_novelai_params')?.classList.toggle('iig-hidden', !isNovelAI);
         // The prose style catalogue is for the other APIs; NovelAI has its own tag library.
         document.getElementById('slay_style_row')?.classList.toggle('iig-hidden', isNovelAI);
-        if (isNovelAI) { renderNovelaiVibes(); updateNaiKnobsUI(); }
+        if (isNovelAI) { renderNovelaiVibes(); renderNovelaiPreciseRefs(); updateNaiKnobsUI(); }
         // size (WxH) is used by openai dall-e style AND custom images/generations
         document.getElementById('slay_size_row')?.classList.toggle('iig-hidden', !(isOpenAI || isCustomImages));
         document.getElementById('slay_quality_row')?.classList.toggle('iig-hidden', !isOpenAI);
@@ -8796,6 +8913,34 @@ function bindSettingsEvents() {
             }
         }
         renderNovelaiVibes();
+    });
+    document.getElementById('slay_novelai_pref_file')?.addEventListener('change', async (e) => {
+        const files = [...(e.target.files || [])];
+        e.target.value = '';
+        let nl;
+        try { nl = await loadNaiLibrary(); } catch (err) { toastr.error(`nai-library.js не загрузился: ${err.message}`, 'SLAY Images'); return; }
+        for (const file of files) {
+            try {
+                const { image, thumb } = await prepareNaiPreciseRef(file, nl);
+                const r = await fetch(`${NAI_VIBE_API}/refs`, {
+                    method: 'POST',
+                    headers: SillyTavern.getContext().getRequestHeaders(),
+                    body: JSON.stringify({ name: file.name, image }),
+                });
+                if (!r.ok) throw new Error(r.status === 404 ? 'серверный плагин nai-vibe не установлен или старый' : await r.text());
+                const v = await r.json();
+                const list = settings.novelaiPreciseRefs || (settings.novelaiPreciseRefs = []);
+                const old = list.find(x => x.name === v.name);
+                if (old) old.thumb = thumb;
+                else list.push({ name: v.name, type: 'character', strength: 1, sameOutfit: false, enabled: true, thumb });
+                saveSettings();
+                toastr.success(`Референс «${v.name}» загружен`, 'SLAY Images', { timeOut: 2000 });
+            } catch (err) {
+                toastr.error(`${file.name}: ${err.message}`, 'SLAY Images');
+            }
+        }
+        await renderNovelaiPreciseRefs();
+        updateNaiKnobsUI();
     });
     document.getElementById('slay_style_pick_btn')?.addEventListener('click', openStylePickerModal);
     document.getElementById('slay_image_context_enabled')?.addEventListener('change', (e) => { settings.imageContextEnabled = e.target.checked; saveSettings(); updateVisibility(); });

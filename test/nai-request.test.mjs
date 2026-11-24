@@ -172,3 +172,45 @@ test('allow_anlas lifts the free-tier clamp to 3 MP / 50 steps', () => {
     const r = buildGenerateRequest({ prompt: 'x', steps: 40, width: 1536, height: 1536, allow_anlas: 'yes' }).parameters;
     assert.equal(r.steps, 28, 'only a boolean true lifts the clamp');
 });
+
+// ── Precise Reference (V5) ──
+import { normalizePreciseRefs, preciseRefDescription, supportsPreciseRefs } from '../server-plugin/nai-vibe/request.mjs';
+
+test('precise reference: description strings follow the outfit tick', () => {
+    assert.equal(preciseRefDescription('character', false), 'character');
+    assert.equal(preciseRefDescription('character', true), 'character_mainoutfit');
+    assert.equal(preciseRefDescription('character&style', true), 'character&style');
+    assert.equal(preciseRefDescription('character&style', false), 'character&style_anyoutfit');
+    assert.equal(preciseRefDescription('style', true), 'style');
+    assert.equal(preciseRefDescription('costume', true), 'costume');
+});
+
+test('precise reference: only V5 Full and Curated take it', () => {
+    assert.equal(supportsPreciseRefs('nai-diffusion-5-full'), true);
+    assert.equal(supportsPreciseRefs('nai-diffusion-5-curated'), true);
+    assert.equal(supportsPreciseRefs('nai-diffusion-5-full-medium'), false);
+    assert.equal(supportsPreciseRefs('nai-diffusion-4-5-full'), false);
+});
+
+test('precise reference: list is cleaned, strength capped at 5, unknown type = character', () => {
+    const l = normalizePreciseRefs([{ name: ' a ', type: 'costume', strength: 9 }, { name: '', type: 'style' }, { name: 'b', type: 'nope', strength: 'x', same_outfit: true }]);
+    assert.deepEqual(l, [
+        { name: 'a', type: 'costume', strength: 5, description: 'costume' },
+        { name: 'b', type: 'character', strength: 1, description: 'character_mainoutfit' },
+    ]);
+    assert.equal(normalizePreciseRefs(Array.from({ length: 20 }, (_, i) => ({ name: 'r' + i }))).length, 8);
+});
+
+test('precise reference: sent only on a supporting model with allow_anlas', () => {
+    const director = [{ image: 'AAAA', description: 'costume', strength: 1.5 }, { image: 'BBBB', description: 'style', strength: 2 }];
+    const on = buildGenerateRequest({ prompt: 'x', model: 'nai-diffusion-5-full', allow_anlas: true }, [], director).parameters;
+    assert.deepEqual(on.director_reference_images, ['AAAA', 'BBBB']);
+    assert.deepEqual(on.director_reference_descriptions[0], { caption: { base_caption: 'costume', char_captions: [] }, legacy_uc: false });
+    assert.deepEqual(on.director_reference_strength_values, [1.5, 2]);
+    assert.deepEqual(on.director_reference_secondary_strength_values, [0, 0]);
+    assert.deepEqual(on.director_reference_information_extracted, [1, 1]);
+    for (const b of [{ model: 'nai-diffusion-5-full' }, { model: 'nai-diffusion-5-full-medium', allow_anlas: true }, { model: 'nai-diffusion-4-5-full', allow_anlas: true }]) {
+        const off = buildGenerateRequest({ prompt: 'x', ...b }, [], director).parameters;
+        assert.equal('director_reference_images' in off, false, JSON.stringify(b));
+    }
+});

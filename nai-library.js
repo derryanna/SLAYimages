@@ -124,12 +124,65 @@ export function resolveNaiSize(settings = {}, blockRatio = null, fallbackRatio =
     return sizeForRatio(preset);
 }
 
-/** Free-tier check: { free, reasons: ['>1 МП', '>28 шагов'] }. */
-export function naiCost({ width, height, steps }) {
+/** Free-tier check: { free, reasons: ['>1 МП', '>28 шагов'] }. refs = Precise Reference pictures that will be sent. */
+export function naiCost({ width, height, steps, refs = 0 }) {
     const reasons = [];
     if (Number(width) * Number(height) > NAI_FREE_PIXELS) reasons.push('>1 МП');
     if (Number(steps) > NAI_FREE_STEPS) reasons.push(`>${NAI_FREE_STEPS} шагов`);
+    if (Number(refs) > 0) reasons.push(`референсы ${refs} × ${NAI_REF_COST} = ${refs * NAI_REF_COST} Anlas за картинку`);
     return { free: reasons.length === 0, reasons };
+}
+
+// ── Precise Reference (V5 Full / Curated): character, style, outfit from example pictures ──
+export const NAI_REF_COST = 5;           // Anlas per reference per picture
+export const NAI_REF_MAX = 8;
+export const NAI_REF_MAX_STRENGTH = 5;
+export const NAI_REF_TYPES = [
+    { v: 'character', n: 'Персонаж' },
+    { v: 'style', n: 'Стиль' },
+    { v: 'costume', n: 'Одежда' },
+    { v: 'character&style', n: 'Персонаж и стиль' },
+];
+
+/** Medium Effort and the older models have no V5 Precise Reference. */
+export function naiSupportsPreciseRefs(model) {
+    return /^nai-diffusion-5-(full|curated)$/.test(String(model || ''));
+}
+
+/**
+ * NovelAI cuts a V5 reference to the ~1 MP bucket (sides in steps of 64) closest to its aspect ratio:
+ * scale to cover, crop the centre. Returns { width, height, resizeWidth, resizeHeight, left, top }.
+ */
+export function naiRefBucket(w, h) {
+    const W = Math.max(1, Number(w) || 1), H = Math.max(1, Number(h) || 1);
+    const target = Math.log(W / H);
+    let best = [1024, 1024], bd = Infinity;
+    const tryPair = (a, b) => { const d = Math.abs(target - Math.log(a / b)); if (d < bd) { bd = d; best = [a, b]; } };
+    for (let side = 256; side <= 4096; side += 64) {
+        const other = Math.floor(NAI_FREE_PIXELS / side / 64) * 64;
+        if (other < 256 || other > 4096) continue;
+        tryPair(side, other);
+        tryPair(other, side);
+    }
+    const [bw, bh] = best;
+    const k = Math.max(bw / W, bh / H);
+    const rw = Math.max(Math.floor(W * k + 0.5), bw), rh = Math.max(Math.floor(H * k + 0.5), bh);
+    return { width: bw, height: bh, resizeWidth: rw, resizeHeight: rh, left: Math.floor((rw - bw) / 2), top: Math.floor((rh - bh) / 2) };
+}
+
+/** Ticked references from the settings, ready for the plugin body: [{ name, type, strength, same_outfit }]. */
+export function activeNaiPreciseRefs(settings) {
+    const out = [];
+    for (const r of settings?.novelaiPreciseRefs || []) {
+        if (!r || !r.enabled || !r.name) continue;
+        const type = NAI_REF_TYPES.some(t => t.v === r.type) ? r.type : 'character';
+        const n = Number(r.strength);
+        const entry = { name: r.name, type, strength: Number.isFinite(n) ? Math.min(NAI_REF_MAX_STRENGTH, Math.max(0, n)) : 1 };
+        if (r.sameOutfit && (type === 'character' || type === 'character&style')) entry.same_outfit = true;
+        out.push(entry);
+        if (out.length >= NAI_REF_MAX) break;
+    }
+    return out;
 }
 
 /** Shrink to the free tier when Anlas is not allowed (keeps the aspect, multiples of 64). */
