@@ -68,7 +68,7 @@ export const NAI_PARAM_DEFAULTS = Object.freeze({
 export const NAI_PROFILE_KEYS = Object.freeze([
     'novelaiModel', 'novelaiAspectRatio', 'novelaiWidth', 'novelaiHeight', 'novelaiSteps', 'novelaiCfgScale',
     'novelaiCfgRescale', 'novelaiSampler', 'novelaiNoiseSchedule', 'novelaiSkipCfgAboveSigma', 'novelaiSeed',
-    'novelaiAllowAnlas', 'novelaiModelFromBlock', 'naiActiveStyle', 'naiActiveNegative',
+    'novelaiAllowAnlas', 'novelaiModelFromBlock', 'novelaiVia', 'naiActiveStyle', 'naiActiveNegative',
 ]);
 
 function snap(n, f) {

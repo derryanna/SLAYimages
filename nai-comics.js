@@ -302,6 +302,58 @@ export function buildNaiPluginBody(instr, opts = {}) {
     return body;
 }
 
+// ─────────────────── NovelAI through an OpenAI-style proxy ───────────────────
+
+// Proxies list the NovelAI models under a vendor prefix: novelai/nai-diffusion-5-full.
+export const NAI_PROXY_MODEL_PREFIX = 'novelai/';
+// The schedules such a proxy documents; any other one is left out (the proxy then uses its default).
+const NAI_PROXY_SCHEDULES = ['karras', 'native'];
+
+/** Model id for the proxy. Medium Effort has no proxy id: V5 Full stands in for it. */
+export function naiProxyModel(model) {
+    let m = String(model || NAI_MODEL_V5).trim();
+    if (m.startsWith(NAI_PROXY_MODEL_PREFIX)) m = m.slice(NAI_PROXY_MODEL_PREFIX.length);
+    if (isNaiV5Medium(m)) m = NAI_MODEL_V5;
+    return NAI_PROXY_MODEL_PREFIX + m;
+}
+
+/** «Add Quality Tags» of the NovelAI site (the server plugin does the same for the account route). */
+export function naiQualityTags(prompt) {
+    const body = String(prompt || '').trim().replace(/,\s*$/, '');
+    const wantsText = /speech bubble|comic|text/i.test(body);
+    const have = new Set(splitTags(body).map(t => t.toLowerCase()));
+    const add = ['very aesthetic', 'masterpiece', ...(wantsText ? [] : ['no text'])].filter(t => !have.has(t));
+    return add.length ? [body, ...add].filter(Boolean).join(', ') : body;
+}
+
+/**
+ * Body for POST {endpoint}/v1/images/generations with a NovelAI model behind an OpenAI-style proxy.
+ * This format has one prompt and one negative: the character prompts are folded into the prompt and
+ * the character negatives into the negative. Vibes, Precise Reference and character positions have no field here.
+ */
+export function buildNaiProxyBody(instr, opts = {}) {
+    const chars = instr.characters || [];
+    let prompt = [composeNaiPrompt(instr, opts.styleTags, opts.styleSuffix), ...chars.map(c => c.prompt)].filter(Boolean).join(', ');
+    if (opts.quality !== false) prompt = naiQualityTags(prompt);
+    const negative = dedupeTags(splitTags([composeNaiNegative(opts.negative, instr), ...chars.map(c => c.uc || '')].filter(Boolean).join(', '))).join(', ');
+    const body = {
+        model: naiProxyModel(opts.model),
+        prompt,
+        negative_prompt: negative,
+        size: `${opts.width}x${opts.height}`,
+        n: 1,
+        steps: opts.steps || 28,
+        scale: opts.scale ?? 5,
+        sampler: opts.sampler || 'k_euler_ancestral',
+        response_format: 'b64_json',
+    };
+    // V5 has no noise schedule choice (the account route drops the field there too).
+    if (!isNaiV5(opts.model) && NAI_PROXY_SCHEDULES.includes(opts.scheduler)) body.noise_schedule = opts.scheduler;
+    if (Number.isFinite(Number(opts.cfgRescale)) && Number(opts.cfgRescale) > 0) body.cfg_rescale = Number(opts.cfgRescale);
+    if (Number.isFinite(Number(opts.seed)) && Number(opts.seed) >= 0) body.seed = Math.floor(Number(opts.seed));
+    return body;
+}
+
 // ─────────────────────────── bubble detection ───────────────────────────
 
 // Dilate then erode a binary mask (square element of radius r), in place.

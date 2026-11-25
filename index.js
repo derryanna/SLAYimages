@@ -2806,6 +2806,8 @@ const defaultSettings = Object.freeze({
     novelaiSkipCfgAboveSigma: 0,
     novelaiSeed: -1,
     novelaiAllowAnlas: false,
+    // 'account' = the NovelAI token stored in SillyTavern; 'proxy' = an OpenAI-style images endpoint (Endpoint + API Key of this panel)
+    novelaiVia: 'account',
     // Retired single-line negative; a non-empty value migrates into the library («Своё») on first run.
     novelaiNegativePrompt: '',
     // Style / negative library (nai-library.js seeds these on first run): naiStyles, naiNegatives,
@@ -2917,7 +2919,7 @@ function shouldTriggerNaisteraVideoForMessage(messageId, everyN) {
     if (n <= 1) return true;
     return getAssistantMessageOrdinal(messageId) % n === 0;
 }
-function getEndpointPlaceholder(apiType) { if (apiType === 'novelai') return 'не нужен — токен из SillyTavern'; return ENDPOINT_PLACEHOLDERS[apiType] || 'https://api.example.com'; }
+function getEndpointPlaceholder(apiType) { if (apiType === 'novelai') return getSettings().novelaiVia === 'proxy' ? 'https://api.example.com' : 'не нужен — токен из SillyTavern'; return ENDPOINT_PLACEHOLDERS[apiType] || 'https://api.example.com'; }
 function normalizeConfiguredEndpoint(apiType, endpoint) {
     const trimmed = String(endpoint || '').trim().replace(/\/+$/, '');
     if (!trimmed) return apiType === 'naistera' ? DEFAULT_ENDPOINTS.naistera : '';
@@ -4467,7 +4469,7 @@ async function generateImageNaistera(prompt, style, options = {}) {
 // kept inline so profiles work even when the module is missing).
 const NAI_PROFILE_KEYS = ['novelaiModel', 'novelaiAspectRatio', 'novelaiWidth', 'novelaiHeight', 'novelaiSteps', 'novelaiCfgScale',
     'novelaiCfgRescale', 'novelaiSampler', 'novelaiNoiseSchedule', 'novelaiSkipCfgAboveSigma', 'novelaiSeed', 'novelaiAllowAnlas',
-    'naiActiveStyle', 'naiActiveNegative'];
+    'novelaiVia', 'naiActiveStyle', 'naiActiveNegative'];
 
 // Option lists for the panel (the module is lazy; the panel HTML is built synchronously).
 const NAI_SIZE_OPTIONS = [
@@ -4742,9 +4744,14 @@ async function updateNaiKnobsUI() {
     }
     const cost = nl.naiCost({ width: w, height: h, steps: params.steps, refs: pRefsOk && params.allowAnlas ? pRefs.length : 0 });
     const costEl = document.getElementById('slay_novelai_cost');
+    const naiProxy = settings.novelaiVia === 'proxy';
+    document.getElementById('slay_novelai_allow_anlas_row')?.classList.toggle('iig-hidden', naiProxy);
     if (costEl) {
         const size = auto ? 'размер из промпта (до 1 МП)' : `${w}×${h}`;
-        if (cost.free) {
+        if (naiProxy) {
+            costEl.innerHTML = `<i class="fa-solid fa-route"></i> Через прокси: ${size}, ${params.steps} шагов. Списывается квота прокси, Anlas не тратятся${medium ? '. Medium Effort на прокси нет — пойдёт V5 Full' : ''}`;
+            costEl.style.color = '';
+        } else if (cost.free) {
             costEl.innerHTML = `<i class="fa-solid fa-circle-check"></i> Бесплатно на Opus: ${size}, ${params.steps} шагов`;
             costEl.style.color = '';
         } else {
@@ -5102,6 +5109,42 @@ async function typesetNaiBubbles(dataUrl, instr, nc) {
     return out;
 }
 
+// NovelAI model behind an OpenAI-style proxy: POST {endpoint}/v1/images/generations with the panel's Endpoint + API Key.
+// One prompt and one negative (characters folded in); vibes and Precise Reference have no field in this format.
+let naiProxyDroppedWarned = '';
+async function generateImageNovelAIProxy(instr, nc, opts, info = {}) {
+    const settings = getSettings();
+    // The base address is enough; a pasted full path (…/v1/images/generations, …/v1/chat/completions) is cut back to it.
+    const endpoint = normalizeApiEndpoint(String(settings.endpoint || '').trim().replace(/\/+$/, '').replace(/\/(images\/generations|chat\/completions)$/i, ''));
+    if (!endpoint || !settings.apiKey) throw new Error('NovelAI через прокси: заполните Endpoint и API Key');
+    const body = nc.buildNaiProxyBody(instr, opts);
+    const dropped = (info.dropped || []).join(' и ');
+    if (dropped && naiProxyDroppedWarned !== dropped) {
+        naiProxyDroppedWarned = dropped;
+        toastr.warning(`Через прокси ${dropped} не отправляются`, 'SLAY Images', { timeOut: 5000 });
+    }
+    iigLog('INFO', `NovelAI (proxy): model=${body.model}, ${body.size}, steps=${body.steps}, cfg=${body.scale}${body.cfg_rescale ? `/rescale ${body.cfg_rescale}` : ''}, ${body.sampler}${body.noise_schedule ? `/${body.noise_schedule}` : ''}${body.seed !== undefined ? `, seed=${body.seed}` : ''}, style=${info.styleName || 'none'}, chars folded=${(instr.characters || []).length}, bubbles=${instr.bubbles.length}${dropped ? `, dropped: ${dropped}` : ''}`);
+    iigLog('INFO', `NovelAI prompt: ${body.prompt.slice(0, 300)}`);
+    iigLog('INFO', `NovelAI negative: ${body.negative_prompt.slice(0, 300)}`);
+    const response = await robustFetch(`${endpoint}/v1/images/generations`, {
+        method: 'POST',
+        headers: buildAuthHeaders(settings.apiKey, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new Error(`NovelAI через прокси (${response.status}): ${text || response.statusText || 'генерация не удалась'}`);
+    }
+    const found = extractImageFromChatResponse(await response.json());
+    if (!found) throw new Error('NovelAI через прокси: в ответе нет картинки (ждали data[0].b64_json или data[0].url)');
+    let dataUrl = /^https?:\/\//i.test(found) ? await fetchUrlAsDataUrl(found) : found;
+    if (instr.bubbles.length) {
+        try { dataUrl = await typesetNaiBubbles(dataUrl, instr, nc); }
+        catch (e) { iigLog('WARN', `NovelAI bubble typesetting failed, saving the raw image: ${e.message}`); }
+    }
+    return dataUrl;
+}
+
 async function generateImageNovelAI(prompt, style, options = {}) {
     const settings = getSettings();
     const ctx = SillyTavern.getContext();
@@ -5111,7 +5154,9 @@ async function generateImageNovelAI(prompt, style, options = {}) {
     const nl = await loadNaiLibrary();
     nl.ensureNaiLibrary(settings);
     // Плагин nai-vibe умеет вайбы, теги качества и персонажные поля V4; без него — родной эндпоинт ST
-    const viaPlugin = await novelaiPluginAvailable();
+    // «Через прокси»: the same look (style, negative, knobs) goes to an OpenAI-style images endpoint instead of the NovelAI account.
+    const viaProxy = settings.novelaiVia === 'proxy';
+    const viaPlugin = !viaProxy && await novelaiPluginAvailable();
     // Модель на каждую картинку: блок пишет "model": "4.5" | "v5" | "medium" — иначе настройка UI.
     // V5: вайбы выключены + фраза в конец base. 4.5: галочки UI, а если ни одной — домашний набор (ночь: violet+dan).
     const uiVibes = (settings.novelaiVibes || []).filter(v => v.enabled).map(v => ({ name: v.name, strength: v.strength }));
@@ -5121,13 +5166,15 @@ async function generateImageNovelAI(prompt, style, options = {}) {
         uiVibes,
         serverVibes: viaPlugin ? naiServerVibeNames : null,
     });
-    const model = look.model;
+    // Medium Effort has no id on a proxy: V5 Full with the panel's own knobs stands in for it.
+    const model = viaProxy && nc.isNaiV5Medium(look.model) ? nc.NAI_MODEL_V5 : look.model;
     // Knobs for THIS image's model: Medium Effort pins steps / sampler / CFG rescale (the stored settings stay as they are).
     const params = nl.normalizeNaiParams(settings, model);
     // Size: preset from the panel; 'auto' = the free size closest to the block's ratio.
     const [w0, h0] = nl.resolveNaiSize(settings, instr.aspectRatio, options.aspectRatio || '1:1');
     // Free-tier guard in the UI (the plugin clamps too unless allow_anlas is sent).
-    const tier = nl.enforceFreeTier(w0, h0, params.steps, params.allowAnlas);
+    // A proxy counts its own quota, not Anlas: no free-tier clamp there.
+    const tier = nl.enforceFreeTier(w0, h0, params.steps, viaProxy || params.allowAnlas);
     const { width, height } = tier;
     if (tier.clamped) iigLog('WARN', `NovelAI: ${w0}x${h0} / ${params.steps} шагов ужато до бесплатного лимита (${width}x${height} / ${tier.steps}); поставьте «Разрешить Anlas», чтобы снять ограничение`);
     // Negative: the active library entry (the house negative by default — a blank negative made images visibly cheaper).
@@ -5136,6 +5183,15 @@ async function generateImageNovelAI(prompt, style, options = {}) {
     // The prose catalogue («[STYLE: … Avoid: …]») stays for the other APIs.
     const styleEntry = nl.activeNaiStyle(settings, model);
     const styleTags = nl.activeNaiStyleTags(settings, model);
+    if (viaProxy) {
+        return await generateImageNovelAIProxy(instr, nc, {
+            styleTags, styleSuffix: look.styleSuffix, negative, model, width, height, quality: settings.novelaiQuality !== false,
+            steps: tier.steps, scale: params.scale, sampler: params.sampler, scheduler: params.scheduler, cfgRescale: params.cfg_rescale, seed: params.seed,
+        }, {
+            styleName: styleEntry ? `«${styleEntry.name}»` : (styleTags ? 'house' : 'none'),
+            dropped: [look.vibes.length ? 'вайбы' : '', (nl.activeNaiPreciseRefs(settings).length || settings.novelaiPortraitRefs) ? 'референсы' : ''].filter(Boolean),
+        });
+    }
     if (!viaPlugin && look.vibes.length) toastr.warning('Серверный плагин nai-vibe не установлен — вайбы пропущены', 'SLAY Images', { timeOut: 4000 });
     if (viaPlugin && look.missing.length && naiMissingVibesWarned !== look.missing.join(',')) {
         naiMissingVibesWarned = look.missing.join(',');
@@ -5200,7 +5256,10 @@ async function generateImageNovelAI(prompt, style, options = {}) {
 function validateSettings() {
     const settings = getSettings();
     // NovelAI: endpoint/ключ живут в самом ST (API Connections → NovelAI), модель имеет дефолт
-    if (settings.apiType === 'novelai') return;
+    if (settings.apiType === 'novelai') {
+        if (settings.novelaiVia === 'proxy' && !(settings.endpoint && settings.apiKey)) throw new Error('Ошибка настроек: для NovelAI через прокси нужны Endpoint и API Key');
+        return;
+    }
     const errors = [];
     if (!settings.endpoint && settings.apiType !== 'naistera') errors.push('URL эндпоинта не настроен');
     if (!settings.apiKey) errors.push('API ключ не настроен');
@@ -7165,10 +7224,11 @@ function createSettingsUI() {
                     <div class="flex-row"><label>Тип API</label><select id="slay_api_type" class="flex1"><option value="openai" ${settings.apiType === 'openai' ? 'selected' : ''}>OpenAI-compatible</option><option value="gemini" ${settings.apiType === 'gemini' ? 'selected' : ''}>Gemini-compatible</option><option value="naistera" ${settings.apiType === 'naistera' ? 'selected' : ''}>Naistera</option><option value="novelai" ${settings.apiType === 'novelai' ? 'selected' : ''}>NovelAI (токен из ST)</option><option value="custom" ${settings.apiType === 'custom' ? 'selected' : ''}>Custom (свой URL)</option></select></div>
                     <div class="flex-row ${settings.apiType === 'custom' ? '' : 'iig-hidden'}" id="slay_custom_format_row"><label>Формат запроса</label><select id="slay_custom_body_format" class="flex1"><option value="chat" ${(settings.customBodyFormat || 'chat') === 'chat' ? 'selected' : ''}>chat/completions (мультимодальный)</option><option value="images" ${settings.customBodyFormat === 'images' ? 'selected' : ''}>images/generations (DALL-E style)</option></select></div>
                     <p class="hint ${settings.apiType === 'custom' ? '' : 'iig-hidden'}" id="slay_custom_hint">Custom: в Endpoint вставь <b>полный URL</b> конечной точки (например <i>https://api.xxx/ai/openai/image</i>) — расширение ничего не дописывает. Формат «images/generations» не поддерживает референсы (картинки-рефы не отправляются).</p>
-                    <div class="flex-row ${settings.apiType === 'novelai' ? 'iig-hidden' : ''}" id="slay_endpoint_row"><label>Endpoint</label><input type="text" id="slay_endpoint" class="text_pole flex1" value="${sanitizeForHtml(settings.endpoint)}" placeholder="${getEndpointPlaceholder(settings.apiType)}"></div>
-                    <div class="flex-row ${settings.apiType === 'novelai' ? 'iig-hidden' : ''}" id="slay_api_key_row"><label>API Key</label><input type="password" id="slay_api_key" class="text_pole flex1" value="${sanitizeForHtml(settings.apiKey)}"><div id="slay_key_toggle" class="menu_button iig-key-toggle" title="Show/Hide"><i class="fa-solid fa-eye"></i></div></div>
+                    <div class="flex-row ${settings.apiType === 'novelai' && settings.novelaiVia !== 'proxy' ? 'iig-hidden' : ''}" id="slay_endpoint_row"><label>Endpoint</label><input type="text" id="slay_endpoint" class="text_pole flex1" value="${sanitizeForHtml(settings.endpoint)}" placeholder="${getEndpointPlaceholder(settings.apiType)}"></div>
+                    <div class="flex-row ${settings.apiType === 'novelai' && settings.novelaiVia !== 'proxy' ? 'iig-hidden' : ''}" id="slay_api_key_row"><label>API Key</label><input type="password" id="slay_api_key" class="text_pole flex1" value="${sanitizeForHtml(settings.apiKey)}"><div id="slay_key_toggle" class="menu_button iig-key-toggle" title="Show/Hide"><i class="fa-solid fa-eye"></i></div></div>
                     <p id="slay_naistera_hint" class="hint ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}">Naistera: вставьте токен из Telegram-бота.</p>
-                    <p id="slay_novelai_hint" class="hint ${settings.apiType === 'novelai' ? '' : 'iig-hidden'}">NovelAI: Endpoint и ключ не нужны — токен берётся из SillyTavern (<b>API Connections → NovelAI</b>). Референсы и картинки гардероба не отправляются (ограничение сервера ST), текстовые описания аутфитов работают.</p>
+                    <p id="slay_novelai_proxy_hint" class="hint ${settings.apiType === 'novelai' && settings.novelaiVia === 'proxy' ? '' : 'iig-hidden'}">NovelAI через прокси: в Endpoint адрес прокси (без /v1/images/generations), в API Key его ключ. Стиль, негатив, размер, шаги, CFG, сэмплер и сид идут как обычно; персонажи склеиваются в один промпт. Вайбы и референсы в этом формате не отправляются.</p>
+                    <p id="slay_novelai_hint" class="hint ${settings.apiType === 'novelai' && settings.novelaiVia !== 'proxy' ? '' : 'iig-hidden'}">NovelAI: Endpoint и ключ не нужны — токен берётся из SillyTavern (<b>API Connections → NovelAI</b>). Референсы и картинки гардероба не отправляются (ограничение сервера ST), текстовые описания аутфитов работают.</p>
                     <div class="flex-row ${settings.apiType === 'naistera' || settings.apiType === 'novelai' ? 'iig-hidden' : ''}" id="slay_model_row"><label>Модель</label><select id="slay_model_select" class="text_pole flex1 ${settings.manualModel ? 'iig-hidden' : ''}"></select><input type="text" id="slay_model" class="text_pole flex1 ${settings.manualModel ? '' : 'iig-hidden'}" placeholder="название модели" value="${sanitizeForHtml(settings.model || '')}" autocomplete="off" spellcheck="false"><div id="slay_refresh_models" class="menu_button iig-refresh-btn" title="Обновить список"><i class="fa-solid fa-sync"></i></div></div>
                     <label class="checkbox_label ${settings.apiType === 'naistera' || settings.apiType === 'novelai' ? 'iig-hidden' : ''}" id="slay_manual_model_row" style="margin-top:2px;"><input type="checkbox" id="slay_manual_model" ${settings.manualModel ? 'checked' : ''}><span style="font-size:0.85em;opacity:0.85;">Ввести название модели вручную</span></label>
                     <div id="slay_test_connection" class="menu_button iig-test-connection"><i class="fa-solid fa-wifi"></i> Тест</div>
@@ -7187,12 +7247,13 @@ function createSettingsUI() {
                     <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="slay_naistera_model_row"><label>Модель Naistera</label><select id="slay_naistera_model" class="flex1"><option value="grok" ${normalizeNaisteraModel(settings.naisteraModel) === 'grok' ? 'selected' : ''}>Grok</option><option value="nano banana" ${normalizeNaisteraModel(settings.naisteraModel) === 'nano banana' ? 'selected' : ''}>Nano Banana</option><option value="grok-pro" ${normalizeNaisteraModel(settings.naisteraModel) === 'grok-pro' ? 'selected' : ''}>Grok Pro</option><option value="novelai" ${normalizeNaisteraModel(settings.naisteraModel) === 'novelai' ? 'selected' : ''}>NovelAI</option></select></div>
                     <div class="flex-row ${settings.apiType === 'naistera' ? '' : 'iig-hidden'}" id="slay_naistera_aspect_row"><label>Соотношение</label><select id="slay_naistera_aspect_ratio" class="flex1"><option value="auto" ${(settings.naisteraAspectRatio || 'auto') === 'auto' ? 'selected' : ''}>Из промпта</option><option value="1:1" ${settings.naisteraAspectRatio === '1:1' ? 'selected' : ''}>1:1</option><option value="3:2" ${settings.naisteraAspectRatio === '3:2' ? 'selected' : ''}>3:2</option><option value="2:3" ${settings.naisteraAspectRatio === '2:3' ? 'selected' : ''}>2:3</option></select></div>
                     <div id="slay_novelai_params" class="${settings.apiType === 'novelai' ? '' : 'iig-hidden'}">
+                    <div class="flex-row" id="slay_novelai_via_row"><label>Откуда рисовать</label><select id="slay_novelai_via" class="flex1"><option value="account" ${settings.novelaiVia === 'proxy' ? '' : 'selected'}>Мой аккаунт NovelAI</option><option value="proxy" ${settings.novelaiVia === 'proxy' ? 'selected' : ''}>Через прокси (images/generations)</option></select></div>
                     <div class="flex-row" id="slay_novelai_model_row"><label>Модель NovelAI</label><select id="slay_novelai_model" class="flex1"><option value="nai-diffusion-5-full" ${(settings.novelaiModel || 'nai-diffusion-5-full') === 'nai-diffusion-5-full' ? 'selected' : ''}>NAI Diffusion V5</option><option value="nai-diffusion-5-full-medium" ${settings.novelaiModel === 'nai-diffusion-5-full-medium' ? 'selected' : ''}>NAI Diffusion V5 · Medium Effort (14 шагов)</option><option value="nai-diffusion-4-5-full" ${settings.novelaiModel === 'nai-diffusion-4-5-full' ? 'selected' : ''}>NAI Diffusion 4.5 Full</option><option value="nai-diffusion-4-5-curated" ${settings.novelaiModel === 'nai-diffusion-4-5-curated' ? 'selected' : ''}>NAI Diffusion 4.5 Curated</option><option value="nai-diffusion-4-full" ${settings.novelaiModel === 'nai-diffusion-4-full' ? 'selected' : ''}>NAI Diffusion 4 Full</option><option value="nai-diffusion-3" ${settings.novelaiModel === 'nai-diffusion-3' ? 'selected' : ''}>NAI Diffusion 3 (Anime V3)</option></select></div>
                     <label class="checkbox_label" title="Блок naicom пишет &quot;model&quot;: 4.5 / v5 для каждой картинки; выключено — всегда модель выше"><input type="checkbox" id="slay_novelai_model_from_block" ${settings.novelaiModelFromBlock === true ? 'checked' : ''}><span>Модель выбирает блок (иначе всегда эта)</span></label>
                     <div class="flex-row" id="slay_novelai_aspect_row"><label>Размер</label><select id="slay_novelai_aspect_ratio" class="flex1">${NAI_SIZE_OPTIONS.map(o => `<option value="${o.v}" ${(settings.novelaiAspectRatio || 'auto') === o.v ? 'selected' : ''}>${o.l}</option>`).join('')}</select></div>
                     <div class="flex-row ${settings.novelaiAspectRatio === 'custom' ? '' : 'iig-hidden'}" id="slay_novelai_custom_size_row"><label>Своё W × H</label><div class="flex1" style="display:flex;gap:6px;align-items:center;"><input type="number" id="slay_novelai_width" class="text_pole flex1" value="${Number(settings.novelaiWidth) || 832}" min="64" max="2048" step="64"><span>×</span><input type="number" id="slay_novelai_height" class="text_pole flex1" value="${Number(settings.novelaiHeight) || 1216}" min="64" max="2048" step="64"></div></div>
                     <p class="hint" id="slay_novelai_cost" style="margin-top:0;"></p>
-                    <label class="checkbox_label"><input type="checkbox" id="slay_novelai_allow_anlas" ${settings.novelaiAllowAnlas ? 'checked' : ''}><span style="font-size:0.85em;opacity:0.85;">Разрешить Anlas (размер больше 1 МП или больше 28 шагов). Без галочки запрос ужимается до бесплатного лимита.</span></label>
+                    <label class="checkbox_label" id="slay_novelai_allow_anlas_row"><input type="checkbox" id="slay_novelai_allow_anlas" ${settings.novelaiAllowAnlas ? 'checked' : ''}><span style="font-size:0.85em;opacity:0.85;">Разрешить Anlas (размер больше 1 МП или больше 28 шагов). Без галочки запрос ужимается до бесплатного лимита.</span></label>
                     <div class="flex-row" id="slay_novelai_style_row"><label>Стиль</label><div class="flex1" style="display:flex;gap:6px;align-items:center;min-width:0;"><span id="slay_novelai_style_name" class="iig-nai-active-name">…</span><div id="slay_novelai_style_btn" class="menu_button" style="white-space:nowrap;flex-shrink:0;display:inline-flex;align-items:center;gap:7px;" title="Библиотека стилей NovelAI"><i class="fa-solid fa-palette"></i><span>Библиотека</span></div></div></div>
                     <div class="flex-row" id="slay_novelai_negative_row"><label>Негатив</label><div class="flex1" style="display:flex;gap:6px;align-items:center;min-width:0;"><span id="slay_novelai_negative_name" class="iig-nai-active-name">…</span><div id="slay_novelai_negative_btn" class="menu_button" style="white-space:nowrap;flex-shrink:0;display:inline-flex;align-items:center;gap:7px;" title="Библиотека негативов NovelAI"><i class="fa-solid fa-ban"></i><span>Библиотека</span></div></div></div>
                     <label class="checkbox_label" id="slay_novelai_quality_row"><input type="checkbox" id="slay_novelai_quality" ${settings.novelaiQuality !== false ? 'checked' : ''}><span style="font-size:0.85em;opacity:0.85;">Теги качества, как на сайте NAI (very aesthetic, masterpiece; уже имеющиеся в стиле не дублируются)</span></label>
@@ -8635,9 +8696,11 @@ function bindSettingsEvents() {
 
         document.getElementById('slay_model_row')?.classList.toggle('iig-hidden', isNaistera || isNovelAI);
         document.getElementById('slay_manual_model_row')?.classList.toggle('iig-hidden', isNaistera || isNovelAI);
-        document.getElementById('slay_endpoint_row')?.classList.toggle('iig-hidden', isNovelAI);
-        document.getElementById('slay_api_key_row')?.classList.toggle('iig-hidden', isNovelAI);
-        document.getElementById('slay_novelai_hint')?.classList.toggle('iig-hidden', !isNovelAI);
+        const isNaiProxy = isNovelAI && settings.novelaiVia === 'proxy';
+        document.getElementById('slay_endpoint_row')?.classList.toggle('iig-hidden', isNovelAI && !isNaiProxy);
+        document.getElementById('slay_api_key_row')?.classList.toggle('iig-hidden', isNovelAI && !isNaiProxy);
+        document.getElementById('slay_novelai_hint')?.classList.toggle('iig-hidden', !isNovelAI || isNaiProxy);
+        document.getElementById('slay_novelai_proxy_hint')?.classList.toggle('iig-hidden', !isNaiProxy);
         document.getElementById('slay_novelai_params')?.classList.toggle('iig-hidden', !isNovelAI);
         // The prose style catalogue is for the other APIs; NovelAI has its own tag library.
         document.getElementById('slay_style_row')?.classList.toggle('iig-hidden', isNovelAI);
@@ -8769,6 +8832,8 @@ function bindSettingsEvents() {
         if (modelInput) modelInput.value = settings.model;
         const fmtSel = document.getElementById('slay_custom_body_format');
         if (fmtSel) fmtSel.value = settings.customBodyFormat;
+        const naiViaSel = document.getElementById('slay_novelai_via');
+        if (naiViaSel) naiViaSel.value = settings.novelaiVia === 'proxy' ? 'proxy' : 'account';
         const naiModelSel = document.getElementById('slay_novelai_model');
         if (naiModelSel) naiModelSel.value = settings.novelaiModel;
         const naiFromBlock = document.getElementById('slay_novelai_model_from_block');
@@ -8942,6 +9007,7 @@ function bindSettingsEvents() {
     document.getElementById('slay_image_size')?.addEventListener('change', (e) => { settings.imageSize = e.target.value; saveSettings(); });
     document.getElementById('slay_naistera_model')?.addEventListener('change', (e) => { settings.naisteraModel = normalizeNaisteraModel(e.target.value); saveSettings(); updateVisibility(); });
     document.getElementById('slay_naistera_aspect_ratio')?.addEventListener('change', (e) => { settings.naisteraAspectRatio = e.target.value; saveSettings(); });
+    document.getElementById('slay_novelai_via')?.addEventListener('change', (e) => { settings.novelaiVia = e.target.value === 'proxy' ? 'proxy' : 'account'; saveSettings(); updateVisibility(); });
     document.getElementById('slay_novelai_model')?.addEventListener('change', (e) => { settings.novelaiModel = e.target.value; saveSettings(); updateNaiKnobsUI(); });
     document.getElementById('slay_novelai_model_from_block')?.addEventListener('change', (e) => { settings.novelaiModelFromBlock = e.target.checked; saveSettings(); });
     document.getElementById('slay_novelai_aspect_ratio')?.addEventListener('change', (e) => { settings.novelaiAspectRatio = e.target.value; saveSettings(); updateNaiKnobsUI(); });
@@ -9059,9 +9125,15 @@ function bindSettingsEvents() {
         const currentSettings = getSettings();
         iigLog('INFO', `Test connection: apiType=${currentSettings.apiType}, endpoint=${currentSettings.endpoint}, apiKey=${currentSettings.apiKey ? 'set' : 'empty'}`);
         try {
-            if (!currentSettings.endpoint && currentSettings.apiType !== 'naistera' && currentSettings.apiType !== 'novelai') throw new Error('Укажите endpoint');
-            if (!currentSettings.apiKey && currentSettings.apiType !== 'novelai') throw new Error('Укажите API key');
-            if (currentSettings.apiType === 'novelai') {
+            const naiAccount = currentSettings.apiType === 'novelai' && currentSettings.novelaiVia !== 'proxy';
+            if (!currentSettings.endpoint && currentSettings.apiType !== 'naistera' && !naiAccount) throw new Error('Укажите endpoint');
+            if (!currentSettings.apiKey && !naiAccount) throw new Error('Укажите API key');
+            if (currentSettings.apiType === 'novelai' && !naiAccount) {
+                // Proxy route: the model list is the cheapest call that checks both the address and the key.
+                const r = await fetch(`${normalizeApiEndpoint(currentSettings.endpoint)}/v1/models`, { headers: buildAuthHeaders(currentSettings.apiKey) }).catch(() => null);
+                if (r?.ok) toastr.success('Прокси отвечает, ключ принят', 'SLAY Images');
+                else toastr.error(`Прокси не ответил${r ? ` (${r.status})` : ''}. Проверьте Endpoint и API Key.`, 'SLAY Images');
+            } else if (currentSettings.apiType === 'novelai') {
                 // Токен живёт в ST — проверяем через родной /api/novelai/status (вернёт план и Anlas)
                 const stCtx = SillyTavern.getContext();
                 const r = await fetch('/api/novelai/status', { method: 'POST', headers: stCtx.getRequestHeaders(), body: JSON.stringify({}) }).catch(() => null);
