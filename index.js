@@ -4816,7 +4816,7 @@ async function openNaiLibraryModal(initialKind = 'styles') {
           <div class="menu_button iig-nai-add" title="Новая запись"><i class="fa-solid fa-plus"></i> Добавить</div>
           <div class="menu_button iig-nai-paste-btn" title="Вставить пост «📎 Генерация …» или промпт — сцена и персонажи вырежутся сами"><i class="fa-solid fa-paste"></i> Пост</div>
           <label class="menu_button iig-nai-img-btn" title="Картинка с сайта NovelAI (PNG / WebP) — стиль из её промпта"><i class="fa-solid fa-image"></i> Картинка<input type="file" class="iig-nai-img-input" accept="image/png,image/webp,image/jpeg" hidden></label>
-          <div class="menu_button iig-nai-catalog-btn" title="Каталог художников с превью (страница /artists/ этого же сайта); «В SLAY» там кладёт стиль прямо сюда"><i class="fa-solid fa-palette"></i> Каталог</div>
+          <div class="menu_button iig-nai-catalog-btn iig-hidden" title="Каталог художников с превью (страница /artists/ этого же сайта); «В SLAY» там кладёт стиль прямо сюда"><i class="fa-solid fa-palette"></i> Каталог</div>
           <a class="menu_button iig-nai-gallery-link" href="https://derryanna.github.io/nai-styles/" target="_blank" rel="noopener noreferrer" title="Галерея готовых стилей с превью: скопируй теги там и вставь сюда через «Пост»"><i class="fa-solid fa-images"></i> Галерея</a>
         </div>
         <div class="iig-nai-paste iig-hidden">
@@ -4841,6 +4841,8 @@ async function openNaiLibraryModal(initialKind = 'styles') {
 
     let kind = initialKind === 'negatives' ? 'negatives' : 'styles';
     let query = '';
+    // «Каталог» is shown only where this site really serves an /artists/ page.
+    let catalogOk = false;
     let editing = null; // id with the inline editor open
     const listEl = overlay.querySelector('.iig-nai-list');
     const footEl = overlay.querySelector('.iig-nai-foot');
@@ -4861,7 +4863,8 @@ async function openNaiLibraryModal(initialKind = 'styles') {
 
     const render = () => {
         overlay.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === kind));
-        for (const sel of ['.iig-nai-paste-btn', '.iig-nai-img-btn', '.iig-nai-catalog-btn', '.iig-nai-gallery-link']) overlay.querySelector(sel)?.classList.toggle('iig-hidden', kind !== 'styles');
+        for (const sel of ['.iig-nai-paste-btn', '.iig-nai-img-btn', '.iig-nai-gallery-link']) overlay.querySelector(sel)?.classList.toggle('iig-hidden', kind !== 'styles');
+        overlay.querySelector('.iig-nai-catalog-btn')?.classList.toggle('iig-hidden', kind !== 'styles' || !catalogOk);
         if (kind !== 'styles') overlay.querySelector('.iig-nai-paste')?.classList.add('iig-hidden');
         const all = nl.naiEntries(settings, kind);
         const list = nl.favFirst(nl.filterNaiEntries(all, query));
@@ -4988,6 +4991,9 @@ async function openNaiLibraryModal(initialKind = 'styles') {
         persist(); render();
         toastr.success(`Стиль «${st.name}» добавлен в библиотеку`, 'SLAY Images', { timeOut: 3000 });
     };
+    fetch('/artists/', { method: 'HEAD' })
+        .then(r => { catalogOk = r.ok && (r.headers.get('content-type') || '').toLowerCase().includes('text/html'); if (catalogOk) render(); })
+        .catch(() => {});
     overlay.querySelector('.iig-nai-catalog-btn').addEventListener('click', () => {
         const wrap = document.createElement('div');
         wrap.className = 'slay-style-overlay iig-nai-catalog';
