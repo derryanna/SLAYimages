@@ -21,6 +21,8 @@ export const NAI_MODEL_45 = 'nai-diffusion-4-5-full';
 export const NAI_MODEL_V5 = 'nai-diffusion-5-full';
 // «Medium Effort» on the NovelAI site = a distilled V5 Full under its own model id (the site swaps the id, it is not a request field).
 export const NAI_MODEL_V5_MEDIUM = 'nai-diffusion-5-full-medium';
+// V5 trained on the curated dataset; same request shape and library slot as V5 Full.
+export const NAI_MODEL_V5_CURATED = 'nai-diffusion-5-curated';
 
 // What the block may write into "model" (or "look"). Anything else → null → the UI setting wins.
 const MODEL_ALIASES = {
@@ -29,6 +31,8 @@ const MODEL_ALIASES = {
     'v5': NAI_MODEL_V5, '5': NAI_MODEL_V5, 'clean': NAI_MODEL_V5, 'nai-diffusion-5-full': NAI_MODEL_V5,
     'medium': NAI_MODEL_V5_MEDIUM, 'v5 medium': NAI_MODEL_V5_MEDIUM, 'v5-medium': NAI_MODEL_V5_MEDIUM, 'v5m': NAI_MODEL_V5_MEDIUM,
     'nai-diffusion-5-full-medium': NAI_MODEL_V5_MEDIUM,
+    'v5 curated': NAI_MODEL_V5_CURATED, 'v5-curated': NAI_MODEL_V5_CURATED, 'v5c': NAI_MODEL_V5_CURATED,
+    'nai-diffusion-5-curated': NAI_MODEL_V5_CURATED,
 };
 
 export function normalizeNaiModel(v) {

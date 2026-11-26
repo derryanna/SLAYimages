@@ -10,6 +10,7 @@ test('proxy model id: vendor prefix, no double prefix, Medium Effort → V5 Full
     assert.equal(naiProxyModel(NAI_MODEL_V5), 'novelai/nai-diffusion-5-full');
     assert.equal(naiProxyModel(NAI_MODEL_45), 'novelai/nai-diffusion-4-5-full');
     assert.equal(naiProxyModel('novelai/nai-diffusion-4-5-curated'), 'novelai/nai-diffusion-4-5-curated');
+    assert.equal(naiProxyModel('nai-diffusion-5-curated'), 'novelai/nai-diffusion-5-curated');
     assert.equal(naiProxyModel(NAI_MODEL_V5_MEDIUM), NAI_PROXY_MODEL_PREFIX + NAI_MODEL_V5);
     assert.equal(naiProxyModel(''), NAI_PROXY_MODEL_PREFIX + NAI_MODEL_V5);
 });

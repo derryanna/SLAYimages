@@ -277,6 +277,14 @@ test('instruction "model" / "look" is normalised; absent or unknown → null', (
     assert.equal(parseNaiInstruction('{"base":"1boy, 1girl","model":"v5"}').model, NAI_MODEL_V5, 'JSON string input');
 });
 
+test('V5 Curated: its own model id with aliases, counts as V5, not Medium', () => {
+    for (const a of ['v5 curated', 'V5-Curated', 'v5c', 'nai-diffusion-5-curated']) {
+        assert.equal(normalizeNaiModel(a), 'nai-diffusion-5-curated', a);
+    }
+    assert.equal(isNaiV5('nai-diffusion-5-curated'), true);
+    assert.equal(isNaiV5Medium('nai-diffusion-5-curated'), false);
+});
+
 test('Medium Effort: its own V5 model id with aliases, counts as V5, pins steps / sampler / CFG rescale', () => {
     for (const a of ['medium', 'Medium', 'v5 medium', 'v5-medium', 'v5m', 'nai-diffusion-5-full-medium']) {
         assert.equal(normalizeNaiModel(a), NAI_MODEL_V5_MEDIUM, a);
