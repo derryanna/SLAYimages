@@ -206,25 +206,33 @@ export function enforceFreeTier(width, height, steps, allowAnlas) {
 
 // House look (rounds 1–5 of nai-style). These remain the seed and the fallback for an empty / broken library.
 export const NAI_DEFAULT_STYLE_V5 = 'muted colors, dim lighting, low key, detailed skin, glossy skin';
-// 4.5 house style: the «Эйден» artist mix (pairs with the aur10 vibe).
+// 4.5 house style: an artist mix.
 export const NAI_DEFAULT_STYLE_45 = '0.8::lart_art1 ::, 1.6::zero_q_0q::, 0.7::etceteraart::, 1.3::dang0_23 ::, 0.9::lesly_oh::, 0.5::sasha_khmel::, -2::multiple images::, intricate details, perfect anatomy, realistic, highres_quality, ultra_detail, sidelighting, volumetric_shadow, chiaroscuro, photorealistic_background, depth_of_field, masterpiece, best quality, very aesthetic, absurdres, highly detailed, sharp focus';
 export const NAI_DEFAULT_NEGATIVE = 'lowres, artistic error, worst quality, bad quality, jpeg artifacts, very displeasing, watermark, logo, signature, text, speech bubble, chibi, bad anatomy, bad hands, extra digits, fewer digits, animal ears, tattoo, flat color, flat shading, plastic skin, airbrushed';
 
 // Styles found on the NovelAI site, inactive until picked.
 const FOUND_STYLES = [
-    { id: 'found-f1', name: 'f1 Jotaro (фото-аниме, контраст)', model: '4.5', value: 'year 2025, fuyao (kafeiwww), 0.6::artist:fumio_(snnmfmw)::, 1.1::artist:haiki_(tegusu)::, artist:penguin_frontier, 1.4::artist:luminous_slime::, shadow skg, 1.2::zanki::, 0.8::isa (babeyxiao)::, 0.6::luoman19921 ::, kukumomo, kshbjb3bppui9om, 1::vlfdus 0 ::, masterpiece, best quality, very aesthetic, absurdres, realistic, photorealistic, anime style, anime coloring, 1.2::high contrast::, muted colors, dramatic lighting, warm lighting' },
-    { id: 'found-f3', name: 'f3 Kitchen (аниме-колор, реализм)', model: '4.5', value: '1.5::anime coloring, anime, anime style::, 1.4::nekido::, 0.7::gomoro (nsfwgomoro)::, 0.6::bludwing::, 1.4::shiba yuuji::, 1.1::vlfdus 0 ::, haiki (tegusu), 1.2::alterinku::, 96yottea, 1.3::xbsx::, very aesthetic, masterpiece, best quality, highly detailed, 2::year 2025 ::, zero q 0q, 1.3::oro9 ::, 1.5::realistic, photorealistic::' },
-    { id: 'found-f4', name: 'f4 Painterly (живопись)', model: '4.5', value: 'high complexity, masterpiece, best quality, amazing quality, highres, very aesthetic, painterly, detailed face, 0.7::artist:ramsrar::, 0.3::artist:m_m_pb::, 0.8::artist:denpa0304 ::, 0.6::artist:en_(e898n)::, artist:dang0_23, 0.8::artist:suzumi (ccroquette)::, 0.5::artist:zero q 0q ::, year 2025, oekaki, -2::unfinished::, 1.7::artist:suzumi_(ccroquette)::, 0.2::artist:n_sol::, absurdres, year 2026, 1.2::artist:faxparduo::, 0.8::artist:aransmind::, artist:east_100, artist:angrymiloras' },
+    { id: 'found-f1', name: 'Фото-аниме, контраст', model: '4.5', value: 'year 2025, fuyao (kafeiwww), 0.6::artist:fumio_(snnmfmw)::, 1.1::artist:haiki_(tegusu)::, artist:penguin_frontier, 1.4::artist:luminous_slime::, shadow skg, 1.2::zanki::, 0.8::isa (babeyxiao)::, 0.6::luoman19921 ::, kukumomo, kshbjb3bppui9om, 1::vlfdus 0 ::, masterpiece, best quality, very aesthetic, absurdres, realistic, photorealistic, anime style, anime coloring, 1.2::high contrast::, muted colors, dramatic lighting, warm lighting' },
+    { id: 'found-f3', name: 'Аниме-колор, реализм', model: '4.5', value: '1.5::anime coloring, anime, anime style::, 1.4::nekido::, 0.7::gomoro (nsfwgomoro)::, 0.6::bludwing::, 1.4::shiba yuuji::, 1.1::vlfdus 0 ::, haiki (tegusu), 1.2::alterinku::, 96yottea, 1.3::xbsx::, very aesthetic, masterpiece, best quality, highly detailed, 2::year 2025 ::, zero q 0q, 1.3::oro9 ::, 1.5::realistic, photorealistic::' },
+    { id: 'found-f4', name: 'Живопись', model: '4.5', value: 'high complexity, masterpiece, best quality, amazing quality, highres, very aesthetic, painterly, detailed face, 0.7::artist:ramsrar::, 0.3::artist:m_m_pb::, 0.8::artist:denpa0304 ::, 0.6::artist:en_(e898n)::, artist:dang0_23, 0.8::artist:suzumi (ccroquette)::, 0.5::artist:zero q 0q ::, year 2025, oekaki, -2::unfinished::, 1.7::artist:suzumi_(ccroquette)::, 0.2::artist:n_sol::, absurdres, year 2026, 1.2::artist:faxparduo::, 0.8::artist:aransmind::, artist:east_100, artist:angrymiloras' },
 ];
 
 export const NAI_SEED_STYLES = Object.freeze([
-    { id: 'house-45', name: 'Эйден (домашний 4.5)', model: '4.5', value: NAI_DEFAULT_STYLE_45 },
+    { id: 'house-45', name: 'Домашний 4.5', model: '4.5', value: NAI_DEFAULT_STYLE_45 },
     { id: 'house-v5', name: 'Домашний V5', model: 'v5', value: NAI_DEFAULT_STYLE_V5 },
     ...FOUND_STYLES,
 ]);
 export const NAI_SEED_NEGATIVES = Object.freeze([
     { id: 'house-neg', name: 'Домашний негатив', value: NAI_DEFAULT_NEGATIVE },
 ]);
+
+// Seed names before 5.2.3. An entry that still carries one of them gets the current seed name; renamed entries are left alone.
+const NAI_OLD_SEED_NAMES = Object.freeze({
+    'house-45': 'Эйден (домашний 4.5)',
+    'found-f1': 'f1 Jotaro (фото-аниме, контраст)',
+    'found-f3': 'f3 Kitchen (аниме-колор, реализм)',
+    'found-f4': 'f4 Painterly (живопись)',
+});
 
 export const NAI_STYLE_MODELS = Object.freeze({ '4.5': 'NAI 4.5', v5: 'NAI V5', any: 'любая' });
 
@@ -262,6 +270,12 @@ export function ensureNaiLibrary(settings) {
     if (!Array.isArray(settings.naiNegatives)) { settings.naiNegatives = NAI_SEED_NEGATIVES.map(s => ({ ...s })); changed = true; }
     settings.naiStyles = settings.naiStyles.map(e => cleanEntry(e, 'styles')).filter(Boolean);
     settings.naiNegatives = settings.naiNegatives.map(e => cleanEntry(e, 'negatives')).filter(Boolean);
+    for (const e of settings.naiStyles) {
+        if (NAI_OLD_SEED_NAMES[e.id] && e.name === NAI_OLD_SEED_NAMES[e.id]) {
+            e.name = NAI_SEED_STYLES.find(x => x.id === e.id).name;
+            changed = true;
+        }
+    }
     if (!settings.naiActiveStyle || typeof settings.naiActiveStyle !== 'object') {
         settings.naiActiveStyle = fresh ? { '4.5': 'house-45', v5: 'house-v5' } : {};
         changed = true;

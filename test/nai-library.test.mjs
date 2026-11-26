@@ -62,7 +62,7 @@ test('profile keys cover the knobs and the active library pointers', () => {
 
 // ───────── library ─────────
 
-test('first run seeds the library: Эйден active on 4.5, house V5 on V5, house negative, found styles inactive', () => {
+test('first run seeds the library: house 4.5 active on 4.5, house V5 on V5, house negative, found styles inactive', () => {
     const s = {};
     assert.equal(ensureNaiLibrary(s), true);
     assert.equal(s.naiStyles.length, NAI_SEED_STYLES.length);
@@ -133,10 +133,10 @@ test('CRUD: add names blanks, duplicate sits next to the source, remove clears p
     assert.equal(n.name, 'Негатив 2');
     const d = duplicateNaiEntry(s, 'styles', 'house-45');
     assert.equal(s.naiStyles[1].id, d.id);
-    assert.equal(d.name, 'Эйден (домашний 4.5) (копия)');
+    assert.equal(d.name, 'Домашний 4.5 (копия)');
     assert.equal(d.value, NAI_DEFAULT_STYLE_45);
-    updateNaiEntry(s, 'styles', d.id, { name: ' Эйден 2 ', value: ' a, b ' });
-    assert.deepEqual([d.name, d.value], ['Эйден 2', 'a, b']);
+    updateNaiEntry(s, 'styles', d.id, { name: ' Дом 2 ', value: ' a, b ' });
+    assert.deepEqual([d.name, d.value], ['Дом 2', 'a, b']);
     assert.equal(removeNaiEntry(s, 'styles', 'house-45'), true);
     assert.equal(s.naiActiveStyle['4.5'], undefined);
     assert.equal(activeNaiStyleTags(s, NAI_MODEL_45), NAI_DEFAULT_STYLE_45, 'removed active → constant');
@@ -149,7 +149,7 @@ test('filterNaiEntries searches name and text, case-insensitively', () => {
     const s = {};
     ensureNaiLibrary(s);
     assert.deepEqual(filterNaiEntries(s.naiStyles, 'PAINTERLY').map(e => e.id), ['found-f4']);
-    assert.equal(filterNaiEntries(s.naiStyles, 'эйден').length, 1);
+    assert.equal(filterNaiEntries(s.naiStyles, 'ДОМАШНИЙ 4.5').length, 1);
     assert.equal(filterNaiEntries(s.naiStyles, '').length, s.naiStyles.length);
 });
 
@@ -246,4 +246,19 @@ test('naiCost counts precise references; only V5 Full / Curated support them', (
     assert.deepEqual(naiCost({ width: 832, height: 1216, steps: 28, refs: 2 }), { free: false, reasons: [`референсы 2 × ${NAI_REF_COST} = 10 Anlas за картинку`] });
     assert.equal(naiSupportsPreciseRefs('nai-diffusion-5-full'), true);
     assert.equal(naiSupportsPreciseRefs('nai-diffusion-5-full-medium'), false);
+});
+
+test('old seed names are renamed once; entries the user renamed stay', () => {
+    const s = {
+        naiStyles: [
+            { id: 'house-45', name: 'Эйден (домашний 4.5)', model: '4.5', value: 'a' },
+            { id: 'found-f1', name: 'моё имя', model: '4.5', value: 'b' },
+            { id: 'sty-x', name: 'f4 Painterly (живопись)', model: 'any', value: 'c' },
+        ],
+        naiNegatives: [], naiActiveStyle: {}, naiActiveNegative: '',
+    };
+    assert.equal(ensureNaiLibrary(s), true);
+    assert.deepEqual(s.naiStyles.map(e => e.name), ['Домашний 4.5', 'моё имя', 'f4 Painterly (живопись)']);
+    assert.equal(s.naiStyles[0].value, 'a');
+    assert.equal(ensureNaiLibrary(s), false);
 });

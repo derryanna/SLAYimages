@@ -4817,6 +4817,7 @@ async function openNaiLibraryModal(initialKind = 'styles') {
           <div class="menu_button iig-nai-paste-btn" title="Вставить пост «📎 Генерация …» или промпт — сцена и персонажи вырежутся сами"><i class="fa-solid fa-paste"></i> Пост</div>
           <label class="menu_button iig-nai-img-btn" title="Картинка с сайта NovelAI (PNG / WebP) — стиль из её промпта"><i class="fa-solid fa-image"></i> Картинка<input type="file" class="iig-nai-img-input" accept="image/png,image/webp,image/jpeg" hidden></label>
           <div class="menu_button iig-nai-catalog-btn" title="Каталог художников с превью (страница /artists/ этого же сайта); «В SLAY» там кладёт стиль прямо сюда"><i class="fa-solid fa-palette"></i> Каталог</div>
+          <a class="menu_button iig-nai-gallery-link" href="https://derryanna.github.io/nai-styles/" target="_blank" rel="noopener noreferrer" title="Галерея готовых стилей с превью: скопируй теги там и вставь сюда через «Пост»"><i class="fa-solid fa-images"></i> Галерея</a>
         </div>
         <div class="iig-nai-paste iig-hidden">
           <textarea class="text_pole iig-nai-paste-text" rows="6" placeholder="Вставь пост «📎 Генерация …» или промпт целиком — останутся артисты и теги качества"></textarea>
@@ -4860,7 +4861,7 @@ async function openNaiLibraryModal(initialKind = 'styles') {
 
     const render = () => {
         overlay.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === kind));
-        for (const sel of ['.iig-nai-paste-btn', '.iig-nai-img-btn', '.iig-nai-catalog-btn']) overlay.querySelector(sel)?.classList.toggle('iig-hidden', kind !== 'styles');
+        for (const sel of ['.iig-nai-paste-btn', '.iig-nai-img-btn', '.iig-nai-catalog-btn', '.iig-nai-gallery-link']) overlay.querySelector(sel)?.classList.toggle('iig-hidden', kind !== 'styles');
         if (kind !== 'styles') overlay.querySelector('.iig-nai-paste')?.classList.add('iig-hidden');
         const all = nl.naiEntries(settings, kind);
         const list = nl.favFirst(nl.filterNaiEntries(all, query));
