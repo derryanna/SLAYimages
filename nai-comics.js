@@ -138,7 +138,8 @@ function parseLegacyPrompt(prompt) {
         if (line.trim()) bubbles.push({ speaker: who, text: line.trim() });
         return `${who} has an empty ${kind} bubble`;
     });
-    const sections = text.split(/\s\|\s/).map(s => s.trim()).filter(Boolean);
+    // "a | b", "a|b" and "a \| b" all split; the pipes of emoticon tags (":|", "|_|") stay.
+    const sections = text.split(/\s*\\?(?<![:_])\|(?!_)\s*/).map(s => s.trim()).filter(Boolean);
     const base = sections.shift() || '';
     const characters = sections.map(sec => {
         let body = sec;

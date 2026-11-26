@@ -389,3 +389,14 @@ test('buildNaiPluginBody appends the V5 phrase after the scene, once', () => {
     assert.equal(body45.prompt, 'muted colors, 1boy, 1girl, kitchen');
     assert.equal(body45.vibes.length, 1);
 });
+
+test('plain prompt: "|" splits scene and characters with or without spaces and with an escaped pipe', () => {
+    for (const p of ['park, night | 1boy, black hair | 1girl, red dress', 'park, night|1boy, black hair|1girl, red dress', 'park, night \\| 1boy, black hair \\| 1girl, red dress']) {
+        const r = parseNaiInstruction({ prompt: p });
+        assert.equal(r.base, 'park, night', p);
+        assert.deepEqual(r.characters.map(c => c.prompt), ['1boy, black hair', '1girl, red dress'], p);
+    }
+    const e = parseNaiInstruction({ prompt: 'park, :|, |_| | 1girl' });
+    assert.equal(e.base, 'park, :|, |_|');
+    assert.deepEqual(e.characters.map(c => c.prompt), ['1girl']);
+});
