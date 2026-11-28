@@ -316,6 +316,8 @@ export function findNaiEntry(settings, kind, id) {
 
 /** Active style entry for a model (block model or settings model), or null when none / explicitly off. */
 export function activeNaiStyle(settings, model) {
+    const t = naiTryStyle(settings, model);
+    if (t) return t;
     const key = naiModelKey(model);
     const id = settings?.naiActiveStyle?.[key];
     if (!id) return null;
@@ -330,6 +332,8 @@ export function activeNaiStyle(settings, model) {
  *   missing / broken → house constant, so wiped settings never produce «cheap» images.
  */
 export function activeNaiStyleTags(settings, model) {
+    const t = naiTryStyle(settings, model);
+    if (t) return t.value;
     const key = naiModelKey(model);
     const id = settings?.naiActiveStyle?.[key];
     if (id === '') return '';
@@ -510,6 +514,91 @@ export function catalogStyleFromMessage(data) {
     const value = String(data.tags ?? '').replace(/\s+/g, ' ').trim().slice(0, 4000);
     if (!name || !value) return null;
     return { name, value };
+}
+
+// ─────────────────────────── gallery and try-on ───────────────────────────
+// The public gallery page keeps its list in one file (`window.LIB = {…};`). SLAY reads that file as TEXT and
+// parses the object as JSON: nothing from it is ever run, and every field is cut to a plain bounded string.
+// A gallery style is only tried on: it sits in settings.naiTryStyle, wins over the library pointer for its model
+// and never enters the library unless the user presses «В библиотеку».
+
+export const NAI_GALLERY_URL = 'https://derryanna.github.io/nai-styles/';
+
+function plainLine(v, max) { return String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max); }
+
+/** Gallery file text → { styles: [{ gid, name, value, model, kinds }], kinds } or null when it is not that file. */
+export function parseNaiGallery(text) {
+    const s = String(text ?? '');
+    const a = s.indexOf('{'), b = s.lastIndexOf('}');
+    if (a < 0 || b <= a) return null;
+    let j;
+    try { j = JSON.parse(s.slice(a, b + 1)); } catch { return null; }
+    if (!j || typeof j !== 'object' || !Array.isArray(j.styles)) return null;
+    const kindList = (v) => (Array.isArray(v) ? v : []).map(k => plainLine(k, 30)).filter(Boolean).slice(0, 12);
+    const styles = [];
+    const seen = new Set();
+    for (const raw of j.styles.slice(0, 2000)) {
+        if (!raw || typeof raw !== 'object') continue;
+        const gid = String(raw.id ?? '');
+        if (!/^[A-Za-z0-9_-]{1,40}$/.test(gid) || seen.has(gid)) continue;   // the id becomes a picture file name
+        const name = plainLine(raw.name, 120), value = plainLine(raw.tags, 4000);
+        if (!name || !value) continue;
+        seen.add(gid);
+        styles.push({ gid, name, value, model: ['4.5', 'v5', 'any'].includes(raw.model) ? raw.model : 'any', kinds: kindList(raw.kinds) });
+    }
+    return { styles, kinds: kindList(j.kinds) };
+}
+
+export function naiGalleryImageUrl(gid) {
+    return /^[A-Za-z0-9_-]{1,40}$/.test(String(gid)) ? `${NAI_GALLERY_URL}img/${gid}.webp` : '';
+}
+
+/** Search over name, tags and kinds; kind '' = any. */
+export function filterNaiGallery(styles, query, kind = '') {
+    const q = String(query || '').trim().toLowerCase();
+    return (styles || []).filter(s => (!kind || s.kinds.includes(kind))
+        && (!q || `${s.name} ${s.value} ${s.kinds.join(' ')}`.toLowerCase().includes(q)));
+}
+
+/** Start trying a style on. Returns the stored record or null when there is nothing to try. */
+export function setNaiTryStyle(settings, style) {
+    const name = plainLine(style?.name, 120), value = plainLine(style?.value, 4000);
+    if (!name || !value) return null;
+    settings.naiTryStyle = { name, value, model: ['4.5', 'v5', 'any'].includes(style.model) ? style.model : 'any' };
+    if (style.gid) settings.naiTryStyle.gid = String(style.gid).slice(0, 40);
+    return settings.naiTryStyle;
+}
+
+export function clearNaiTryStyle(settings) {
+    const had = !!settings?.naiTryStyle;
+    if (settings) delete settings.naiTryStyle;
+    return had;
+}
+
+/** The style being tried on, shaped like a library entry, when it applies to this model (no model = any). */
+export function naiTryStyle(settings, model) {
+    const t = settings?.naiTryStyle;
+    if (!t || typeof t !== 'object' || !t.name || !t.value) return null;
+    if (model !== undefined && t.model !== 'any' && t.model !== naiModelKey(model)) return null;
+    return { id: '', name: String(t.name), value: String(t.value), model: t.model === '4.5' || t.model === 'v5' ? t.model : 'any', gid: t.gid || '', tryOn: true };
+}
+
+/** «В библиотеку»: the tried style becomes a library entry (an entry with the same tags is reused), active for its model. */
+export function keepNaiTryStyle(settings, forModel) {
+    const t = naiTryStyle(settings);
+    if (!t) return null;
+    const list = Array.isArray(settings.naiStyles) ? settings.naiStyles : [];
+    const entry = list.find(e => e.value === t.value && e.model === t.model) || addNaiEntry(settings, 'styles', { name: t.name, value: t.value, model: t.model });
+    clearNaiTryStyle(settings);
+    setActiveNaiStyle(settings, entry.id, forModel);
+    return entry;
+}
+
+/** What to write under a picture: the name of the style that really went into the request. */
+export function naiStyleLabel(settings, model) {
+    const e = activeNaiStyle(settings, model);
+    if (e) return e.tryOn ? `${e.name} · примерка` : e.name;
+    return activeNaiStyleTags(settings, model) ? 'Домашний' : 'без стиля';
 }
 
 // ─────────────────────────── style import: posts and NovelAI images ───────────────────────────

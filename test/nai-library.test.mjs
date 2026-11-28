@@ -7,6 +7,7 @@ import {
     addNaiEntry, updateNaiEntry, duplicateNaiEntry, removeNaiEntry, setActiveNaiStyle, setActiveNaiNegative, toggleActiveNaiStyle, toggleActiveNaiNegative,
     filterNaiEntries, favFirst, exportNaiLibrary, importNaiLibrary, migrateNaiNegative, catalogStyleFromMessage,
     NAI_DEFAULT_STYLE_45, NAI_DEFAULT_STYLE_V5, NAI_DEFAULT_NEGATIVE, NAI_SEED_STYLES,
+    parseNaiGallery, naiGalleryImageUrl, filterNaiGallery, setNaiTryStyle, clearNaiTryStyle, naiTryStyle, keepNaiTryStyle, naiStyleLabel, NAI_GALLERY_URL,
 } from '../nai-library.js';
 import { NAI_MODEL_45, NAI_MODEL_V5 } from '../nai-comics.js';
 
@@ -261,4 +262,94 @@ test('old seed names are renamed once; entries the user renamed stay', () => {
     assert.deepEqual(s.naiStyles.map(e => e.name), ['Домашний 4.5', 'моё имя', 'f4 Painterly (живопись)']);
     assert.equal(s.naiStyles[0].value, 'a');
     assert.equal(ensureNaiLibrary(s), false);
+});
+
+// ───────── gallery and try-on ─────────
+
+const GALLERY_FILE = `window.LIB = ${JSON.stringify({
+    scene: 'x', seed: 1, kinds: ['Аниме', 'Арт'],
+    styles: [
+        { id: 's01', name: 'Первый', model: '4.5', tags: '1.2::artist:a ::, very aesthetic', kinds: ['Аниме'] },
+        { id: 's02', name: '  Второй\n стиль ', model: 'v5', tags: 'muted colors,\n film grain', kinds: ['Арт'] },
+        { id: 's03', name: 'Любой', model: 'weird', tags: 'flat color', kinds: 'nope' },
+        { id: '../evil', name: 'Плохой id', model: 'v5', tags: 'x' },
+        { id: 's01', name: 'Дубль', model: 'v5', tags: 'x' },
+        { id: 's05', name: '', model: 'v5', tags: 'x' },
+        { id: 's06', name: 'Без тегов', model: 'v5', tags: '' },
+        null, 'строка',
+    ],
+})};\n`;
+
+test('parseNaiGallery: the file is read as data, bad rows are dropped, fields are flattened', () => {
+    const g = parseNaiGallery(GALLERY_FILE);
+    assert.deepEqual(g.kinds, ['Аниме', 'Арт']);
+    assert.deepEqual(g.styles.map(s => s.gid), ['s01', 's02', 's03']);
+    assert.deepEqual(g.styles[1], { gid: 's02', name: 'Второй стиль', value: 'muted colors, film grain', model: 'v5', kinds: ['Арт'] });
+    assert.equal(g.styles[2].model, 'any'); assert.deepEqual(g.styles[2].kinds, []);
+    assert.equal(naiGalleryImageUrl('s02'), `${NAI_GALLERY_URL}img/s02.webp`);
+    assert.equal(naiGalleryImageUrl('../evil'), '');
+});
+
+test('parseNaiGallery: anything that is not the gallery file gives null and never runs', () => {
+    globalThis.__galleryRan = false;
+    for (const bad of ['', 'nope', '<html>404</html>', 'window.LIB = {"styles": 5};', 'globalThis.__galleryRan = true; window.LIB = {styles:[]}', '{"styles":[', null, undefined]) {
+        assert.equal(parseNaiGallery(bad), null);
+    }
+    assert.equal(globalThis.__galleryRan, false);
+    const long = parseNaiGallery(JSON.stringify({ styles: [{ id: 'a', name: 'n'.repeat(500), tags: 't'.repeat(9000) }] }));
+    assert.equal(long.styles[0].name.length, 120); assert.equal(long.styles[0].value.length, 4000);
+});
+
+test('filterNaiGallery: search over name, tags and kinds, plus a kind chip', () => {
+    const g = parseNaiGallery(GALLERY_FILE);
+    assert.deepEqual(filterNaiGallery(g.styles, 'film').map(s => s.gid), ['s02']);
+    assert.deepEqual(filterNaiGallery(g.styles, 'аниме').map(s => s.gid), ['s01']);
+    assert.deepEqual(filterNaiGallery(g.styles, '', 'Арт').map(s => s.gid), ['s02']);
+    assert.equal(filterNaiGallery(g.styles, '').length, 3);
+});
+
+test('try-on: wins over the library for its model only, and the library is not touched', () => {
+    const s = {}; ensureNaiLibrary(s);
+    const before = JSON.stringify(s.naiStyles), pointers = JSON.stringify(s.naiActiveStyle);
+    const g = parseNaiGallery(GALLERY_FILE);
+    setNaiTryStyle(s, g.styles[1]); // v5
+    assert.equal(activeNaiStyleTags(s, NAI_MODEL_V5), 'muted colors, film grain');
+    assert.equal(activeNaiStyle(s, NAI_MODEL_V5).tryOn, true);
+    assert.equal(naiStyleLabel(s, NAI_MODEL_V5), 'Второй стиль · примерка');
+    assert.equal(activeNaiStyleTags(s, NAI_MODEL_45), NAI_DEFAULT_STYLE_45, '4.5 keeps its library style');
+    assert.equal(naiTryStyle(s, NAI_MODEL_45), null);
+    assert.equal(naiTryStyle(s).gid, 's02', 'no model = whatever is being tried');
+    assert.equal(JSON.stringify(s.naiStyles), before); assert.equal(JSON.stringify(s.naiActiveStyle), pointers);
+    setNaiTryStyle(s, g.styles[2]); // any
+    assert.equal(activeNaiStyleTags(s, NAI_MODEL_45), 'flat color'); assert.equal(activeNaiStyleTags(s, NAI_MODEL_V5), 'flat color');
+    setActiveNaiStyle(s, '', NAI_MODEL_V5);
+    assert.equal(activeNaiStyleTags(s, NAI_MODEL_V5), 'flat color', 'try-on beats «Без стиля» until it is taken off');
+    assert.equal(clearNaiTryStyle(s), true); assert.equal(clearNaiTryStyle(s), false);
+    assert.equal(activeNaiStyleTags(s, NAI_MODEL_V5), '');
+    assert.equal(setNaiTryStyle(s, { name: '', value: 'x' }), null);
+    assert.equal(setNaiTryStyle(s, { name: 'x', value: ' ' }), null);
+    assert.equal(s.naiTryStyle, undefined);
+});
+
+test('keepNaiTryStyle: becomes a library entry once, active for its model, try-on ends', () => {
+    const s = {}; ensureNaiLibrary(s);
+    const n = s.naiStyles.length;
+    const g = parseNaiGallery(GALLERY_FILE);
+    setNaiTryStyle(s, g.styles[1]);
+    const e = keepNaiTryStyle(s, NAI_MODEL_45);
+    assert.equal(s.naiStyles.length, n + 1); assert.equal(e.name, 'Второй стиль'); assert.equal(e.model, 'v5');
+    assert.equal(s.naiTryStyle, undefined); assert.equal(s.naiActiveStyle.v5, e.id);
+    assert.equal(naiStyleLabel(s, NAI_MODEL_V5), 'Второй стиль');
+    setNaiTryStyle(s, g.styles[1]);
+    assert.equal(keepNaiTryStyle(s, NAI_MODEL_V5).id, e.id, 'same tags → the existing entry');
+    assert.equal(s.naiStyles.length, n + 1);
+    assert.equal(keepNaiTryStyle(s, NAI_MODEL_V5), null, 'nothing is being tried');
+});
+
+test('naiStyleLabel: library name, house constant, no style', () => {
+    const s = {}; ensureNaiLibrary(s);
+    assert.equal(naiStyleLabel(s, NAI_MODEL_45), activeNaiStyle(s, NAI_MODEL_45).name);
+    setActiveNaiStyle(s, '', NAI_MODEL_45);
+    assert.equal(naiStyleLabel(s, NAI_MODEL_45), 'без стиля');
+    assert.equal(naiStyleLabel({}, NAI_MODEL_V5), 'Домашний');
 });

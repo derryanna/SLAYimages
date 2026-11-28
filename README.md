@@ -290,6 +290,8 @@ For the NovelAI API type the «Стиль» row of the prose catalogue is replac
 - The modal: «Стили / Негативы» tabs, search by name and text, click a row to activate it (a second click switches that model off), «Без стиля» (switches the style off for both models at once) / «Без негатива» rows for an explicit empty value, pencil → inline editor (name, model, tags; autosaved), duplicate, delete, JSON export / import (the SLAY export format or a plain `{"name": "tags"}` map).
 - When the library is empty or the active entry is missing, the house constants are used, so wiped settings never produce bare prompts.
 - «Каталог» (shown only when the site serves an `/artists/` page) opens that artists catalogue page in a frame; its «В SLAY» button posts `{ type: 'slay-style', name, tags }` to the tavern window (same origin only) and the style is added to the library for the current model, no file needed.
+- «Галерея» shows the public style gallery as cards inside the same window (search and kind chips). A click **tries a style on**: it is used for the next pictures of its model until «Снять», and is not written into the library; «В библиотеку» on the bar keeps it. The gallery list is read as text and parsed as data, nothing from it is run; if it does not load, the gallery page opens in a new tab as before.
+- Under every NovelAI picture there is a small line with the style that went into that request (library name, «… · примерка», «Домашний» or «без стиля»). It is stored in the chat metadata by picture file name, not in the message text; pictures made before 5.3.0 have no line.
 - The settings file is written whole from the open tab — edit the library in one tab at a time.
 
 ### Panel sections

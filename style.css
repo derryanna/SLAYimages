@@ -458,6 +458,14 @@
     height: auto;
     transition: opacity .2s;
 }
+/* Style name under a generated picture. width:0 + min-width:100% = as wide as the block it sits in,
+   without ever stretching a shrink-to-fit parent (bot templates wrap pictures in fit-content boxes). */
+.iig-style-cap {
+    display: block; width: 0; min-width: 100%; box-sizing: border-box;
+    margin: 2px 0 0; padding: 0 2px;
+    font-size: 0.72em; line-height: 1.4; opacity: 0.6; text-align: left; font-style: normal; font-weight: 400;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .iig-regen-btn {
     position: absolute;
     top: 8px;
@@ -3331,7 +3339,27 @@
 .iig-nai-filters { align-items: center; }
 .iig-nai-search { flex: 1; min-width: 120px; margin: 0; }
 .iig-nai-add, .iig-nai-paste-btn, .iig-nai-img-btn { white-space: nowrap; margin: 0; }
-.iig-nai-gallery-link { white-space: nowrap; margin: 0; text-decoration: none; color: inherit; }
+.iig-nai-gallery-btn { white-space: nowrap; margin: 0; }
+.iig-nai-gallery-btn.is-on { border-color: #f472b6; color: #f472b6; }
+/* Try-on bar: which gallery style is on right now, with «В библиотеку» / «Снять» */
+.iig-nai-try {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px;
+    background: rgba(244,114,182,0.1); border-bottom: 1px solid rgba(244,114,182,0.3);
+}
+.iig-nai-try-text { flex: 1; min-width: 160px; font-size: 0.88em; overflow-wrap: anywhere; }
+.iig-nai-try-warn { font-size: 0.82em; color: #ff9800; margin-top: 2px; }
+.iig-nai-try .menu_button { margin: 0; white-space: nowrap; }
+.iig-nai-gkinds { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; }
+.iig-nai-ggrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+.iig-nai-gcard {
+    border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; overflow: hidden; cursor: pointer;
+    background: rgba(255,255,255,0.03); transition: border-color .18s, background .18s;
+}
+.iig-nai-gcard:hover { border-color: rgba(244,114,182,0.4); }
+.iig-nai-gcard.is-active { border-color: #f472b6; background: rgba(244,114,182,0.12); }
+.iig-nai-gcard img { display: block; width: 100%; aspect-ratio: 2 / 3; object-fit: cover; background: rgba(255,255,255,0.04); }
+.iig-nai-gname { padding: 5px 7px 7px; font-size: 0.78em; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .iig-nai-ggrid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); } }
 .iig-nai-filters { flex-wrap: wrap; }
 .iig-nai-paste { padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.07); }
 .iig-nai-paste-text { width: 100%; box-sizing: border-box; font-size: 0.85em; resize: vertical; }

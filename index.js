@@ -4094,7 +4094,65 @@ async function saveImageToFile(dataUrl, debugMeta = {}) {
     }
     const result = await response.json();
     iigLog('INFO', 'Image saved to:', result.path);
+    rememberImageStyle(result.path, takeResultStyle(dataUrl));
     return result.path;
+}
+
+// ── Style name under a picture ──
+// The NovelAI generator knows which library style (or try-on) went into the request; the picture gets its file
+// name only later, in saveImageToFile. The label rides between the two keyed by the picture itself, then lives in
+// the chat metadata as { file name: style name } — outside the message text, so swipes, edits and the src-healing
+// passes cannot lose it, and nothing in the fragile message HTML changes.
+const IIG_STYLE_META_KEY = 'slay_image_styles';
+const pendingResultStyles = new Map();
+function noteResultStyle(dataUrl, label) {
+    if (typeof dataUrl === 'string' && label) {
+        pendingResultStyles.set(dataUrl, String(label));
+        // A picture that failed to save must not stay here forever (the key is the whole image).
+        while (pendingResultStyles.size > 6) pendingResultStyles.delete(pendingResultStyles.keys().next().value);
+    }
+    return dataUrl;
+}
+function takeResultStyle(dataUrl) {
+    const label = pendingResultStyles.get(dataUrl);
+    pendingResultStyles.delete(dataUrl);
+    return label || '';
+}
+function imageFileKey(src) {
+    const tail = String(src || '').split(/[?#]/)[0].split('/').pop() || '';
+    try { return decodeURIComponent(tail); } catch (_) { return tail; }
+}
+function rememberImageStyle(path, label) {
+    const key = imageFileKey(path);
+    if (!key || !label) return;
+    try {
+        const ctx = SillyTavern.getContext();
+        const meta = ctx.chatMetadata;
+        if (!meta || typeof meta !== 'object') return;
+        const map = meta[IIG_STYLE_META_KEY] && typeof meta[IIG_STYLE_META_KEY] === 'object' ? meta[IIG_STYLE_META_KEY] : (meta[IIG_STYLE_META_KEY] = {});
+        map[key] = String(label).slice(0, 140);
+        (ctx.saveMetadataDebounced || ctx.saveMetadata)?.();
+    } catch (e) { iigLog('WARN', `style caption: could not remember the style of ${key}: ${e.message}`); }
+}
+function imageStyleLabel(src) {
+    try { return String(SillyTavern.getContext().chatMetadata?.[IIG_STYLE_META_KEY]?.[imageFileKey(src)] || ''); } catch (_) { return ''; }
+}
+// The caption is a sibling right after the picture's wrap (not inside it: the wrap must stay exactly image-sized,
+// and other extensions pin their buttons to its corners). Safe to call again: it updates or removes the caption.
+function updateStyleCaption(imgEl) {
+    const wrap = imgEl?.closest?.('.iig-img-wrap');
+    if (!wrap) return;
+    const next = wrap.nextElementSibling;
+    let cap = next?.classList?.contains('iig-style-cap') ? next : null;
+    const label = imageStyleLabel(imgEl.getAttribute('src'));
+    if (!label) { cap?.remove(); return; }
+    if (!cap) {
+        cap = document.createElement('span');
+        cap.className = 'iig-style-cap';
+        wrap.after(cap);
+    }
+    cap.textContent = `🎨 ${label}`;
+    cap.title = `Стиль NovelAI: ${label}`;
 }
 
 async function saveNaisteraMediaToFile(dataUrl, mediaKind = 'video', debugMeta = {}) {
@@ -4763,7 +4821,7 @@ async function updateNaiKnobsUI() {
     if (styleEl) {
         const key = nl.naiModelKey(settings.novelaiModel);
         const e = nl.activeNaiStyle(settings, settings.novelaiModel);
-        styleEl.textContent = e ? e.name : (settings.naiActiveStyle?.[key] === '' ? 'Без стиля' : 'Домашний (константа)');
+        styleEl.textContent = e ? (e.tryOn ? `примерка: ${e.name}` : e.name) : (settings.naiActiveStyle?.[key] === '' ? 'Без стиля' : 'Домашний (константа)');
         styleEl.title = e ? e.value : '';
     }
     const negEl = document.getElementById('slay_novelai_negative_name');
@@ -4792,6 +4850,7 @@ function syncNaiKnobInputs() {
     if (anlas) anlas.checked = !!settings.novelaiAllowAnlas;
 }
 
+let naiGalleryCache = null; // parsed gallery list, kept until the tab reloads
 // ── Library modal: styles / negatives, search, activate in one click, inline editor, duplicate / delete, JSON import / export ──
 async function openNaiLibraryModal(initialKind = 'styles') {
     const settings = getSettings();
@@ -4817,8 +4876,10 @@ async function openNaiLibraryModal(initialKind = 'styles') {
           <div class="menu_button iig-nai-paste-btn" title="Вставить пост «📎 Генерация …» или промпт — сцена и персонажи вырежутся сами"><i class="fa-solid fa-paste"></i> Пост</div>
           <label class="menu_button iig-nai-img-btn" title="Картинка с сайта NovelAI (PNG / WebP) — стиль из её промпта"><i class="fa-solid fa-image"></i> Картинка<input type="file" class="iig-nai-img-input" accept="image/png,image/webp,image/jpeg" hidden></label>
           <div class="menu_button iig-nai-catalog-btn iig-hidden" title="Каталог художников с превью (страница /artists/ этого же сайта); «В SLAY» там кладёт стиль прямо сюда"><i class="fa-solid fa-palette"></i> Каталог</div>
-          <a class="menu_button iig-nai-gallery-link" href="https://derryanna.github.io/nai-styles/" target="_blank" rel="noopener noreferrer" title="Галерея готовых стилей с превью: скопируй теги там и вставь сюда через «Пост»"><i class="fa-solid fa-images"></i> Галерея</a>
+          <div class="menu_button iig-nai-gallery-btn" title="Галерея готовых стилей с превью: тык по картинке — примерить стиль, в библиотеку он сам не попадает"><i class="fa-solid fa-images"></i> Галерея</div>
         </div>
+        <div class="iig-nai-try iig-hidden"></div>
+        <div class="iig-nai-gkinds iig-hidden"></div>
         <div class="iig-nai-paste iig-hidden">
           <textarea class="text_pole iig-nai-paste-text" rows="6" placeholder="Вставь пост «📎 Генерация …» или промпт целиком — останутся артисты и теги качества"></textarea>
           <div class="flex-row iig-nai-paste-actions">
@@ -4844,6 +4905,13 @@ async function openNaiLibraryModal(initialKind = 'styles') {
     // «Каталог» is shown only where this site really serves an /artists/ page.
     let catalogOk = false;
     let editing = null; // id with the inline editor open
+    // «Галерея»: the same window shows the public gallery as cards; a click tries a style on (see nai-library.js).
+    let view = 'lib';   // 'lib' | 'gallery'
+    let gallery = null; // { styles, kinds } once loaded
+    let gkind = '';
+    const tryEl = overlay.querySelector('.iig-nai-try');
+    const gkindsEl = overlay.querySelector('.iig-nai-gkinds');
+    const modelName = (m) => m === 'any' ? 'любая' : (m === 'v5' ? 'V5' : '4.5');
     const listEl = overlay.querySelector('.iig-nai-list');
     const footEl = overlay.querySelector('.iig-nai-foot');
     const esc = sanitizeForHtml;
@@ -4857,15 +4925,71 @@ async function openNaiLibraryModal(initialKind = 'styles') {
     // A click toggles: inactive → active for its model, active → off (explicit «Без стиля» for that model).
     const activate = (id) => {
         if (kind === 'negatives') nl.toggleActiveNaiNegative(settings, id);
-        else nl.toggleActiveNaiStyle(settings, id, settings.novelaiModel);
+        else {
+            // Picking a library style (or «Без стиля») ends the try-on: otherwise the click would seem to do nothing.
+            if (nl.clearNaiTryStyle(settings)) toastr.info('Примерка снята', 'SLAY Images', { timeOut: 2000 });
+            nl.toggleActiveNaiStyle(settings, id, settings.novelaiModel);
+        }
         persist(); render();
+    };
+    const renderTryBar = () => {
+        const t = nl.naiTryStyle(settings);
+        tryEl.classList.toggle('iig-hidden', !t || kind !== 'styles');
+        if (!t) { tryEl.innerHTML = ''; return; }
+        const cur = nl.naiModelKey(settings.novelaiModel);
+        const off = t.model !== 'any' && t.model !== cur;
+        tryEl.innerHTML = `<div class="iig-nai-try-text"><i class="fa-solid fa-shirt"></i> Примеряешь: <b>${esc(t.name)}</b> <span class="iig-nai-badge ${t.model === 'any' ? 'is-any' : ''}">${modelName(t.model)}</span>${off ? `<div class="iig-nai-try-warn">сейчас в настройках модель ${modelName(cur)} — этот стиль на неё не действует</div>` : ''}</div>
+            <div class="menu_button" data-try="keep" title="Сохранить этот стиль в свою библиотеку и включить"><i class="fa-solid fa-bookmark"></i> В библиотеку</div>
+            <div class="menu_button" data-try="off" title="Снять примерку: вернётся стиль из библиотеки"><i class="fa-solid fa-xmark"></i> Снять</div>`;
+    };
+    const renderGallery = () => {
+        const kinds = gallery?.kinds || [];
+        gkindsEl.classList.toggle('iig-hidden', !kinds.length);
+        gkindsEl.innerHTML = kinds.map(k => `<button type="button" class="slay-style-chip ${gkind === k ? 'active' : ''}" data-gkind="${esc(k)}">${esc(k)}</button>`).join('');
+        if (!gallery) { listEl.innerHTML = '<div class="slay-style-loading">Загружаю галерею…</div>'; footEl.textContent = ''; return; }
+        const list = nl.filterNaiGallery(gallery.styles, query, gkind);
+        const tryGid = nl.naiTryStyle(settings)?.gid || '';
+        listEl.innerHTML = list.length ? `<div class="iig-nai-ggrid">${list.map(s => `<div class="iig-nai-gcard ${s.gid === tryGid ? 'is-active' : ''}" data-gid="${esc(s.gid)}" title="${esc(s.value.slice(0, 300))}">
+                <img loading="lazy" alt="" src="${esc(nl.naiGalleryImageUrl(s.gid))}">
+                <div class="iig-nai-gname">${esc(s.name)} <span class="iig-nai-badge ${s.model === 'any' ? 'is-any' : ''}">${modelName(s.model)}</span></div>
+            </div>`).join('')}</div>` : '<div class="slay-style-loading">Ничего не нашлось</div>';
+        footEl.innerHTML = `${gallery.styles.length} стилей в галерее${query || gkind ? `, найдено ${list.length}` : ''} · тык по картинке — примерить; в библиотеку стиль попадёт только по кнопке «В библиотеку» · <a href="${esc(nl.NAI_GALLERY_URL)}" target="_blank" rel="noopener noreferrer">открыть страницу галереи</a>`;
+    };
+    const openGallery = async () => {
+        view = 'gallery'; kind = 'styles'; editing = null;
+        render();
+        if (gallery) return;
+        try {
+            if (!naiGalleryCache) {
+                const r = await fetch(`${nl.NAI_GALLERY_URL}styles.js`, { credentials: 'omit', cache: 'no-cache' });
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const g = nl.parseNaiGallery(await r.text());
+                if (!g || !g.styles.length) throw new Error('файл галереи не разобрался');
+                naiGalleryCache = g;
+            }
+            gallery = naiGalleryCache;
+        } catch (e) {
+            iigLog('WARN', `NovelAI gallery did not load: ${e.message}`);
+            view = 'lib';
+            toastr.warning(`Галерея не загрузилась (${e.message}). Она открыта отдельной вкладкой: теги оттуда вставляются через «Пост».`, 'SLAY Images', { timeOut: 6000 });
+            window.open(nl.NAI_GALLERY_URL, '_blank', 'noopener');
+        }
+        if (overlay.isConnected) render();
     };
 
     const render = () => {
-        overlay.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === kind));
-        for (const sel of ['.iig-nai-paste-btn', '.iig-nai-img-btn', '.iig-nai-gallery-link']) overlay.querySelector(sel)?.classList.toggle('iig-hidden', kind !== 'styles');
-        overlay.querySelector('.iig-nai-catalog-btn')?.classList.toggle('iig-hidden', kind !== 'styles' || !catalogOk);
-        if (kind !== 'styles') overlay.querySelector('.iig-nai-paste')?.classList.add('iig-hidden');
+        const inGallery = view === 'gallery';
+        overlay.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', !inGallery && b.dataset.tab === kind));
+        for (const sel of ['.iig-nai-paste-btn', '.iig-nai-img-btn']) overlay.querySelector(sel)?.classList.toggle('iig-hidden', kind !== 'styles' || inGallery);
+        overlay.querySelector('.iig-nai-add')?.classList.toggle('iig-hidden', inGallery);
+        const galBtn = overlay.querySelector('.iig-nai-gallery-btn');
+        galBtn?.classList.toggle('iig-hidden', kind !== 'styles');
+        galBtn?.classList.toggle('is-on', inGallery);
+        overlay.querySelector('.iig-nai-catalog-btn')?.classList.toggle('iig-hidden', kind !== 'styles' || !catalogOk || inGallery);
+        if (kind !== 'styles' || inGallery) overlay.querySelector('.iig-nai-paste')?.classList.add('iig-hidden');
+        renderTryBar();
+        if (inGallery) { renderGallery(); return; }
+        gkindsEl.classList.add('iig-hidden');
         const all = nl.naiEntries(settings, kind);
         const list = nl.favFirst(nl.filterNaiEntries(all, query));
         const curKey = nl.naiModelKey(settings.novelaiModel);
@@ -4907,6 +5031,19 @@ async function openNaiLibraryModal(initialKind = 'styles') {
     };
 
     listEl.addEventListener('click', async (e) => {
+        const card = e.target.closest('.iig-nai-gcard');
+        if (card && gallery) {
+            const st = gallery.styles.find(s => s.gid === card.dataset.gid);
+            if (!st) return;
+            if (nl.naiTryStyle(settings)?.gid === st.gid) { nl.clearNaiTryStyle(settings); persist(); render(); return; }
+            const t = nl.setNaiTryStyle(settings, st);
+            if (!t) return;
+            persist(); render();
+            const cur = nl.naiModelKey(settings.novelaiModel);
+            if (t.model !== 'any' && t.model !== cur) toastr.warning(`«${t.name}» сделан для модели ${modelName(t.model)}, а в настройках сейчас ${modelName(cur)}: на неё примерка не подействует`, 'SLAY Images', { timeOut: 6000 });
+            else toastr.success(`Примеряешь «${t.name}»: следующие картинки пойдут в этом стиле, пока не снимешь`, 'SLAY Images', { timeOut: 3500 });
+            return;
+        }
         const row = e.target.closest('.iig-nai-row');
         if (!row) return;
         if (row.dataset.none) { activate(''); return; }
@@ -4942,7 +5079,23 @@ async function openNaiLibraryModal(initialKind = 'styles') {
     listEl.addEventListener('change', (e) => {
         if (e.target.dataset.f === 'model') { persist(); render(); }
     });
-    overlay.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => { kind = b.dataset.tab; editing = null; render(); }));
+    overlay.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => { kind = b.dataset.tab; view = 'lib'; editing = null; render(); }));
+    overlay.querySelector('.iig-nai-gallery-btn').addEventListener('click', () => { if (view === 'gallery') { view = 'lib'; render(); } else openGallery(); });
+    gkindsEl.addEventListener('click', (e) => {
+        const k = e.target.closest('[data-gkind]')?.dataset.gkind;
+        if (k === undefined) return;
+        gkind = gkind === k ? '' : k; render();
+    });
+    tryEl.addEventListener('click', (e) => {
+        const act = e.target.closest('[data-try]')?.dataset.try;
+        if (!act) return;
+        if (act === 'off') nl.clearNaiTryStyle(settings);
+        if (act === 'keep') {
+            const entry = nl.keepNaiTryStyle(settings, settings.novelaiModel);
+            if (entry) { view = 'lib'; kind = 'styles'; toastr.success(`«${entry.name}» теперь в библиотеке и включён`, 'SLAY Images', { timeOut: 3000 }); }
+        }
+        persist(); render();
+    });
     overlay.querySelector('.iig-nai-search').addEventListener('input', (e) => { query = e.target.value; render(); });
     overlay.querySelector('.iig-nai-add').addEventListener('click', () => {
         const entry = nl.addNaiEntry(settings, kind, kind === 'styles' ? { model: nl.naiModelKey(settings.novelaiModel) } : {});
@@ -4957,7 +5110,7 @@ async function openNaiLibraryModal(initialKind = 'styles') {
             return false;
         }
         const entry = nl.addNaiEntry(settings, 'styles', { name: r.name || '', value: r.value, model: r.model || nl.naiModelKey(settings.novelaiModel) });
-        kind = 'styles'; editing = entry.id; query = ''; overlay.querySelector('.iig-nai-search').value = '';
+        kind = 'styles'; view = 'lib'; editing = entry.id; query = ''; overlay.querySelector('.iig-nai-search').value = '';
         persist(); render();
         toastr.success(`«${entry.name}» добавлен — проверь теги и включи кликом`, 'SLAY Images', { timeOut: 3500 });
         return true;
@@ -5190,14 +5343,15 @@ async function generateImageNovelAI(prompt, style, options = {}) {
     // The prose catalogue («[STYLE: … Avoid: …]») stays for the other APIs.
     const styleEntry = nl.activeNaiStyle(settings, model);
     const styleTags = nl.activeNaiStyleTags(settings, model);
+    const styleLabel = nl.naiStyleLabel(settings, model);
     if (viaProxy) {
-        return await generateImageNovelAIProxy(instr, nc, {
+        return noteResultStyle(await generateImageNovelAIProxy(instr, nc, {
             styleTags, styleSuffix: look.styleSuffix, negative, model, width, height, quality: settings.novelaiQuality !== false,
             steps: tier.steps, scale: params.scale, sampler: params.sampler, scheduler: params.scheduler, cfgRescale: params.cfg_rescale, seed: params.seed,
         }, {
             styleName: styleEntry ? `«${styleEntry.name}»` : (styleTags ? 'house' : 'none'),
             dropped: [look.vibes.length ? 'вайбы' : '', (nl.activeNaiPreciseRefs(settings).length || settings.novelaiPortraitRefs) ? 'референсы' : ''].filter(Boolean),
-        });
+        }), styleLabel);
     }
     if (!viaPlugin && look.vibes.length) toastr.warning('Серверный плагин nai-vibe не установлен — вайбы пропущены', 'SLAY Images', { timeOut: 4000 });
     if (viaPlugin && look.missing.length && naiMissingVibesWarned !== look.missing.join(',')) {
@@ -5256,7 +5410,7 @@ async function generateImageNovelAI(prompt, style, options = {}) {
         try { dataUrl = await typesetNaiBubbles(dataUrl, instr, nc); }
         catch (e) { iigLog('WARN', `NovelAI bubble typesetting failed, saving the raw image: ${e.message}`); }
     }
-    return dataUrl;
+    return noteResultStyle(dataUrl, styleLabel);
 }
 
 // ── Validation ──
@@ -6093,6 +6247,7 @@ function attachRegenButton(imgEl) {
                 // Success path — apply new src and persist everywhere
                 liveImg.setAttribute('src', newImagePath);
                 liveImg.src = newImagePath;
+                updateStyleCaption(liveImg);
                 // Remember the supersession PERSISTENTLY. Even if some store we
                 // can't reach (preset regex copies, display_text rebuilt by other
                 // extensions) resurrects the old src on a future re-render, the
@@ -6140,6 +6295,7 @@ function attachRegenButton(imgEl) {
     });
     wrap.appendChild(btn);
     imgEl.dataset.iigRegenBound = '1';
+    updateStyleCaption(imgEl);
 }
 
 // Scan a message element (or root) for generated images and attach regen buttons to them.
@@ -6149,7 +6305,7 @@ function attachRegenButton(imgEl) {
 // instead of only after a reload — and so our buttons stop sitting on top of
 // another extension's images.
 function iigStripOurUi() {
-    for (const b of document.querySelectorAll('#chat .iig-regen-btn, #chat .iig-regenerate-btn')) b.remove();
+    for (const b of document.querySelectorAll('#chat .iig-regen-btn, #chat .iig-regenerate-btn, #chat .iig-style-cap')) b.remove();
     for (const img of document.querySelectorAll('#chat img[data-iig-instruction]')) delete img.dataset.iigRegenBound;
 }
 
@@ -6214,6 +6370,8 @@ function attachRegenButtonsInRoot(root, { rehydratePending = false } = {}) {
         }
     }
 
+    // A caption whose picture was swapped for a placeholder has nothing to describe.
+    for (const cap of root.querySelectorAll('.iig-style-cap')) if (!cap.previousElementSibling?.classList.contains('iig-img-wrap')) cap.remove();
     // THEN: attach regen button to normal generated images. Skip anything error-ish.
     const imgs = root.querySelectorAll('img.iig-generated-image[data-iig-instruction], img[data-iig-instruction]');
     for (const img of imgs) {
